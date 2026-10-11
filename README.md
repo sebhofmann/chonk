@@ -20,6 +20,15 @@ Ready-made packages are attached to the [releases](../../releases):
 | Linux | `chonk-…-linux-x86_64.tar.gz` | Needs Vulkan and either Wayland or X11. |
 | Windows | `chonk-…-windows-x86_64.zip` | Run `chonk.exe` directly. |
 
+On Arch Linux, build and install the package from the `PKGBUILD` with
+[paru](https://github.com/Morganamilo/paru):
+
+```sh
+git clone https://github.com/sebhofmann/chonk.git
+cd chonk/pkg/arch
+paru -Bi .
+```
+
 ## Build it yourself
 
 ```sh
@@ -101,3 +110,7 @@ Lines with a wrong checksum are skipped during import.
 - The `Release` workflow starts when a release is published on GitHub
   (Releases → "Draft a new release" → pick a tag such as `v0.1.0` → "Publish
   release"). It builds the packages and attaches them to the release.
+
+## License
+
+[MIT](LICENSE)

@@ -1,0 +1,5 @@
+# Was makepkg beim Bauen hier ablegt.
+/chonk/
+/src/
+/pkg/
+*.pkg.tar.*
