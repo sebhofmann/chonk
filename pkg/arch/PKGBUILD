@@ -1,7 +1,7 @@
 # Maintainer: Sebastian Hofmann (github.com/sebhofmann)
 
 pkgname=chonk
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc="Reads Tanita body composition scale measurements from the SD card and shows them as charts"
 arch=('x86_64')
