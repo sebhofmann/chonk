@@ -17,7 +17,7 @@ use crate::db::Db;
 use crate::i18n::{self, Lang, t};
 use crate::model::{
     Better, Metric, Range, Status, bmi_status, fat_status, fmt_date, fmt_date_time, fmt_day,
-    fmt_num, visceral_status,
+    fmt_num, timestamp, visceral_status,
 };
 use crate::sdcard;
 use crate::tanita::{Measurement, Profile};
@@ -670,7 +670,37 @@ impl ChonkApp {
                             .child(segments_card(latest))
                             .child(composition_card(latest)),
                     )
-                    .child(charts),
+                    .child(charts)
+                    .child(segment_charts(
+                        t().fat_in_percent,
+                        theme::FAT,
+                        "%",
+                        visible,
+                        |m| {
+                            [
+                                m.fat_right_arm_pct,
+                                m.fat_left_arm_pct,
+                                m.fat_trunk_pct,
+                                m.fat_right_leg_pct,
+                                m.fat_left_leg_pct,
+                            ]
+                        },
+                    ))
+                    .child(segment_charts(
+                        t().muscle_in_kg,
+                        theme::MUSCLE,
+                        "kg",
+                        visible,
+                        |m| {
+                            [
+                                m.muscle_right_arm_kg,
+                                m.muscle_left_arm_kg,
+                                m.muscle_trunk_kg,
+                                m.muscle_right_leg_kg,
+                                m.muscle_left_leg_kg,
+                            ]
+                        },
+                    )),
             )
             .into_any_element()
     }
@@ -1094,12 +1124,65 @@ fn metric_color(metric: Metric) -> u32 {
 }
 
 fn chart_card(metric: Metric, data: &[Measurement], height: f32) -> Div {
-    let color = metric_color(metric);
-    let points = metric.series(data);
-    let unit = if metric.unit().is_empty() {
+    series_card(
+        metric.label(),
+        metric.unit(),
+        metric.decimals(),
+        metric_color(metric),
+        metric.series(data),
+        height,
+    )
+}
+
+/// Eine Zeile mit je einem Diagramm für Arme, Rumpf und Beine.
+fn segment_charts(
+    heading: &'static str,
+    color: u32,
+    unit: &'static str,
+    data: &[Measurement],
+    values: fn(&Measurement) -> [Option<f64>; 5],
+) -> Div {
+    let labels = [
+        t().right_arm,
+        t().left_arm,
+        t().trunk,
+        t().right_leg,
+        t().left_leg,
+    ];
+    let cards = labels.into_iter().enumerate().map(|(i, label)| {
+        let points = data
+            .iter()
+            .filter_map(|m| Some((timestamp(m.measured_at), values(m)[i]?)))
+            .collect();
+        series_card(label, unit, 1, color, points, 150.)
+    });
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .pt_2()
+                .text_size(px(12.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(theme::TEXT_SECONDARY))
+                .child(heading),
+        )
+        .child(div().grid().grid_cols(5).gap_4().children(cards))
+}
+
+fn series_card(
+    label: &'static str,
+    unit: &'static str,
+    decimals: usize,
+    color: u32,
+    points: Vec<(i64, f64)>,
+    height: f32,
+) -> Div {
+    let note = if unit.is_empty() {
         String::new()
     } else {
-        t().in_unit(metric.unit())
+        t().in_unit(unit)
     };
     card()
         .flex()
@@ -1111,13 +1194,13 @@ fn chart_card(metric: Metric, data: &[Measurement], height: f32) -> Div {
                 .items_center()
                 .gap_2()
                 .child(div().w(px(12.)).h(px(2.)).bg(rgb(color)))
-                .child(card_title(metric.label(), unit)),
+                .child(card_title(label, note)),
         )
         .child(div().h(px(height)).w_full().child(line_chart(ChartSpec {
             points,
             color,
-            unit: metric.unit(),
-            decimals: metric.decimals(),
+            unit,
+            decimals,
         })))
 }
 
