@@ -3,7 +3,10 @@ name: CI
 on:
   push:
     branches: [master]
+    # Reine Doku-Änderungen brauchen keinen Build.
+    paths-ignore: ["**.md", "LICENSE"]
   pull_request:
+    paths-ignore: ["**.md", "LICENSE"]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -11,6 +14,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Ohne Debug-Infos baut es schneller und der Cache bleibt kleiner.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
 
 jobs:
   check:
@@ -33,7 +39,11 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      # Speichert Registry und kompilierte Abhängigkeiten. Auch nach einem
+      # fehlgeschlagenen Lauf, damit der nächste Versuch nicht bei null beginnt.
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Linux-Abhängigkeiten installieren
         if: runner.os == 'Linux'
@@ -48,6 +58,3 @@ jobs:
 
       - name: Tests
         run: cargo test --locked
-
-      - name: Release-Build
-        run: cargo build --release --locked

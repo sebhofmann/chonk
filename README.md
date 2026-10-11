@@ -75,6 +75,7 @@ Zeilen mit falscher Prüfsumme werden beim Import übersprungen.
 - gpui wird mit dem Feature `runtime_shaders` gebaut. Unter macOS genügen
   dadurch die Xcode Command Line Tools, ein vollständiges Xcode ist nicht nötig.
 - Der Workflow `CI` prüft jeden Push unter Linux, macOS und Windows
-  (Formatierung, Clippy, Tests, Release-Build).
+  (Formatierung, Clippy, Tests). Abhängigkeiten werden zwischen den Läufen
+  gecacht, reine Doku-Änderungen lösen keinen Lauf aus.
 - Ein Tag wie `v0.1.0` startet den Workflow `Release`, der die Pakete baut und
   an ein GitHub-Release hängt.
