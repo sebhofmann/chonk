@@ -6,7 +6,7 @@ archives them in a local SQLite database and shows them as charts.
 Runs on macOS, Linux and Windows. The interface is available in English and
 German.
 
-![Overview with weight trend, key figures and profile switcher](docs/screenshot.png)
+![Overview with the trend of all values, key figures and profile switcher](docs/screenshot.png)
 
 *The screenshot shows made-up sample data.*
 
