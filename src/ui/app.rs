@@ -31,6 +31,14 @@ enum Tab {
     Table,
 }
 
+/// Eine Reihe im gemeinsamen Diagramm: eine Kennzahl oder der Wert eines Körpersegments.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TrendKey {
+    Metric(Metric),
+    Fat(usize),
+    Muscle(usize),
+}
+
 pub struct ChonkApp {
     db: Db,
     /// Profil-Slots mit Messungen und deren Anzahl.
@@ -47,8 +55,8 @@ pub struct ChonkApp {
     last_import: Option<NaiveDateTime>,
     range: Range,
     tab: Tab,
-    /// Kennzahlen, die im gemeinsamen Diagramm ausgeblendet sind.
-    hidden: Vec<Metric>,
+    /// Reihen des gemeinsamen Diagramms, deren Sichtbarkeit vom Anfangszustand abweicht.
+    trend_toggled: Vec<TrendKey>,
     card: Option<PathBuf>,
     message: Option<String>,
 }
@@ -67,7 +75,7 @@ impl ChonkApp {
             last_import: None,
             range: Range::All,
             tab: Tab::Overview,
-            hidden: Vec::new(),
+            trend_toggled: Vec::new(),
             card: None,
             message: None,
         };
@@ -522,66 +530,138 @@ impl ChonkApp {
 
     // ----------------------------------------------------------- Übersicht
 
-    fn toggle_metric(&mut self, metric: Metric) {
-        match self.hidden.iter().position(|m| *m == metric) {
+    fn toggle_trend(&mut self, key: TrendKey) {
+        match self.trend_toggled.iter().position(|k| *k == key) {
             Some(i) => {
-                self.hidden.remove(i);
+                self.trend_toggled.remove(i);
             }
-            None => self.hidden.push(metric),
+            None => self.trend_toggled.push(key),
         }
+    }
+
+    /// Kennzahlen sind anfangs sichtbar, Segmente ausgeblendet; ein Klick dreht das um.
+    fn trend_shown(&self, key: TrendKey) -> bool {
+        matches!(key, TrendKey::Metric(_)) != self.trend_toggled.contains(&key)
+    }
+
+    fn legend_chip(
+        &self,
+        key: TrendKey,
+        label: &'static str,
+        color: u32,
+        cx: &Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let shown = self.trend_shown(key);
+        div()
+            .id(SharedString::from(format!("legend-{key:?}")))
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .px_2()
+            .py_0p5()
+            .rounded(px(6.))
+            .text_size(px(12.))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(theme::GRID)))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.toggle_trend(key);
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .w(px(12.))
+                    .h(px(3.))
+                    .rounded(px(1.5))
+                    .bg(rgb(if shown { color } else { theme::AXIS })),
+            )
+            .child(
+                div()
+                    .when(shown, |d| d.text_color(rgb(theme::TEXT_SECONDARY)))
+                    .when(!shown, |d| {
+                        d.text_color(rgb(theme::TEXT_MUTED)).line_through()
+                    })
+                    .child(label),
+            )
     }
 
     /// Alle Kennzahlen in einem Diagramm; ein Klick in der Legende blendet eine Reihe aus oder ein.
     fn trend_card(&self, visible: &[Measurement], cx: &Context<Self>) -> Div {
         let since = visible.first().map(|m| fmt_date(m.measured_at));
-        let legend = Metric::ALL.into_iter().map(|metric| {
-            let shown = !self.hidden.contains(&metric);
+        let legend_row = || div().flex().flex_wrap().items_center().gap_1();
+        let group_label = |text: &'static str| {
             div()
-                .id(SharedString::from(format!("legend-{metric:?}")))
-                .flex()
-                .items_center()
-                .gap_1p5()
+                .w(px(128.))
+                .flex_none()
                 .px_2()
-                .py_0p5()
-                .rounded(px(6.))
-                .text_size(px(12.))
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(theme::GRID)))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.toggle_metric(metric);
-                    cx.notify();
-                }))
-                .child(
-                    div()
-                        .w(px(12.))
-                        .h(px(3.))
-                        .rounded(px(1.5))
-                        .bg(rgb(if shown {
-                            metric_color(metric)
-                        } else {
-                            theme::AXIS
-                        })),
-                )
-                .child(
-                    div()
-                        .when(shown, |d| d.text_color(rgb(theme::TEXT_SECONDARY)))
-                        .when(!shown, |d| {
-                            d.text_color(rgb(theme::TEXT_MUTED)).line_through()
-                        })
-                        .child(metric.label()),
-                )
-        });
-        let series = Metric::ALL
-            .into_iter()
-            .filter(|metric| !self.hidden.contains(metric))
-            .map(|metric| Series {
-                label: metric.label(),
-                points: metric.series(visible),
-                color: metric_color(metric),
-                unit: metric.unit(),
-                decimals: metric.decimals(),
-            })
-            .collect();
+                .text_size(px(11.))
+                .text_color(rgb(theme::TEXT_MUTED))
+                .child(text)
+        };
+
+        let mut series = Vec::new();
+        let mut metrics = legend_row();
+        for metric in Metric::ALL {
+            let key = TrendKey::Metric(metric);
+            metrics =
+                metrics.child(self.legend_chip(key, metric.label(), metric_color(metric), cx));
+            if self.trend_shown(key) {
+                series.push(Series {
+                    label: metric.label().into(),
+                    points: metric.series(visible),
+                    color: metric_color(metric),
+                    unit: metric.unit(),
+                    decimals: metric.decimals(),
+                    thin: false,
+                });
+            }
+        }
+
+        type Segments = fn(&Measurement) -> [Option<f64>; 5];
+        type Group = (
+            &'static str,
+            &'static str,
+            &'static str,
+            [u32; 5],
+            Segments,
+            fn(usize) -> TrendKey,
+        );
+        let groups: [Group; 2] = [
+            (
+                t().fat_in_percent,
+                t().body_fat,
+                "%",
+                theme::FAT_SEGMENTS,
+                fat_segments,
+                TrendKey::Fat,
+            ),
+            (
+                t().muscle_in_kg,
+                t().muscle_mass,
+                "kg",
+                theme::MUSCLE_SEGMENTS,
+                muscle_segments,
+                TrendKey::Muscle,
+            ),
+        ];
+        let mut segment_rows = Vec::new();
+        for (heading, name, unit, colors, values, key_of) in groups {
+            let mut row = legend_row().child(group_label(heading));
+            for (i, label) in segment_labels().into_iter().enumerate() {
+                let key = key_of(i);
+                row = row.child(self.legend_chip(key, label, colors[i], cx));
+                if self.trend_shown(key) {
+                    series.push(Series {
+                        label: format!("{name} · {label}").into(),
+                        points: segment_series(visible, values, i),
+                        color: colors[i],
+                        unit,
+                        decimals: 1,
+                        thin: true,
+                    });
+                }
+            }
+            segment_rows.push(row);
+        }
 
         card()
             .flex()
@@ -593,7 +673,14 @@ impl ChonkApp {
                     .map(|date| t().percent_change_since(&date))
                     .unwrap_or_default(),
             ))
-            .child(div().flex().flex_wrap().gap_1().children(legend))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .child(metrics)
+                    .children(segment_rows),
+            )
             .child(div().h(px(250.)).w_full().child(multi_chart(series)))
     }
 
@@ -676,30 +763,14 @@ impl ChonkApp {
                         theme::FAT,
                         "%",
                         visible,
-                        |m| {
-                            [
-                                m.fat_right_arm_pct,
-                                m.fat_left_arm_pct,
-                                m.fat_trunk_pct,
-                                m.fat_right_leg_pct,
-                                m.fat_left_leg_pct,
-                            ]
-                        },
+                        fat_segments,
                     ))
                     .child(segment_charts(
                         t().muscle_in_kg,
                         theme::MUSCLE,
                         "kg",
                         visible,
-                        |m| {
-                            [
-                                m.muscle_right_arm_kg,
-                                m.muscle_left_arm_kg,
-                                m.muscle_trunk_kg,
-                                m.muscle_right_leg_kg,
-                                m.muscle_left_leg_kg,
-                            ]
-                        },
+                        muscle_segments,
                     )),
             )
             .into_any_element()
@@ -1134,6 +1205,48 @@ fn chart_card(metric: Metric, data: &[Measurement], height: f32) -> Div {
     )
 }
 
+/// Segmente in der Reihenfolge rechter Arm, linker Arm, Rumpf, rechtes Bein, linkes Bein.
+fn segment_labels() -> [&'static str; 5] {
+    [
+        t().right_arm,
+        t().left_arm,
+        t().trunk,
+        t().right_leg,
+        t().left_leg,
+    ]
+}
+
+fn fat_segments(m: &Measurement) -> [Option<f64>; 5] {
+    [
+        m.fat_right_arm_pct,
+        m.fat_left_arm_pct,
+        m.fat_trunk_pct,
+        m.fat_right_leg_pct,
+        m.fat_left_leg_pct,
+    ]
+}
+
+fn muscle_segments(m: &Measurement) -> [Option<f64>; 5] {
+    [
+        m.muscle_right_arm_kg,
+        m.muscle_left_arm_kg,
+        m.muscle_trunk_kg,
+        m.muscle_right_leg_kg,
+        m.muscle_left_leg_kg,
+    ]
+}
+
+/// Zeitreihe eines Segments für Diagramme.
+fn segment_series(
+    data: &[Measurement],
+    values: fn(&Measurement) -> [Option<f64>; 5],
+    segment: usize,
+) -> Vec<(i64, f64)> {
+    data.iter()
+        .filter_map(|m| Some((timestamp(m.measured_at), values(m)[segment]?)))
+        .collect()
+}
+
 /// Eine Zeile mit je einem Diagramm für Arme, Rumpf und Beine.
 fn segment_charts(
     heading: &'static str,
@@ -1142,18 +1255,8 @@ fn segment_charts(
     data: &[Measurement],
     values: fn(&Measurement) -> [Option<f64>; 5],
 ) -> Div {
-    let labels = [
-        t().right_arm,
-        t().left_arm,
-        t().trunk,
-        t().right_leg,
-        t().left_leg,
-    ];
-    let cards = labels.into_iter().enumerate().map(|(i, label)| {
-        let points = data
-            .iter()
-            .filter_map(|m| Some((timestamp(m.measured_at), values(m)[i]?)))
-            .collect();
+    let cards = segment_labels().into_iter().enumerate().map(|(i, label)| {
+        let points = segment_series(data, values, i);
         series_card(label, unit, 1, color, points, 150.)
     });
     div()

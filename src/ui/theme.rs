@@ -21,6 +21,11 @@ pub const VISCERAL: u32 = 0x9085e9;
 pub const METABOLIC_AGE: u32 = 0x008300;
 pub const DCI: u32 = 0xe66767;
 
+// Segmente im gemeinsamen Diagramm: Abstufungen der Fett- und der Muskelfarbe
+// (rechter Arm, linker Arm, Rumpf, rechtes Bein, linkes Bein).
+pub const FAT_SEGMENTS: [u32; 5] = [0xfbd3c0, 0xf5b093, 0xee8e66, 0xc44f20, 0xa8431b];
+pub const MUSCLE_SEGMENTS: [u32; 5] = [0xbdeedb, 0x86dcbc, 0x4fc79a, 0x168a62, 0x127452];
+
 // Statusfarben, nur für Bewertungen und immer mit Text.
 pub const GOOD: u32 = 0x0ca30c;
 pub const WARNING: u32 = 0xfab219;

@@ -22,12 +22,14 @@ pub struct ChartSpec {
 
 /// Eine Kennzahl im gemeinsamen Diagramm.
 pub struct Series {
-    pub label: &'static str,
+    pub label: SharedString,
     /// (Unix-Sekunden, Wert), aufsteigend sortiert.
     pub points: Vec<(i64, f64)>,
     pub color: u32,
     pub unit: &'static str,
     pub decimals: usize,
+    /// Dünnere Linie für untergeordnete Reihen.
+    pub thin: bool,
 }
 
 /// Mehrere Kennzahlen in einem Diagramm. Weil ihre Einheiten nicht zusammenpassen, zeigt die
@@ -342,8 +344,16 @@ fn paint_time_axis(plot: &Plot, window: &mut Window, cx: &mut App) {
     }
 }
 
-/// Zeichnet eine Zeitreihe als Linie, auf Wunsch mit Fläche bis zur Grundlinie.
-fn paint_series(plot: &Plot, pts: &[(i64, f64)], color: u32, area: bool, window: &mut Window) {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Line {
+    /// Linie mit Fläche bis zur Grundlinie.
+    Area,
+    Plain,
+    Thin,
+}
+
+/// Zeichnet eine Zeitreihe als Linie.
+fn paint_series(plot: &Plot, pts: &[(i64, f64)], color: u32, style: Line, window: &mut Window) {
     if pts.is_empty() {
         return;
     }
@@ -374,7 +384,7 @@ fn paint_series(plot: &Plot, pts: &[(i64, f64)], color: u32, area: bool, window:
             dot(window, plot.sx(run[0].0), plot.sy(run[0].1), 3.0, color);
             continue;
         }
-        if area {
+        if style == Line::Area {
             let mut area = PathBuilder::fill();
             area.move_to(point(px(plot.sx(run[0].0)), px(bottom)));
             for p in run.iter() {
@@ -387,7 +397,8 @@ fn paint_series(plot: &Plot, pts: &[(i64, f64)], color: u32, area: bool, window:
             }
         }
 
-        let mut line = PathBuilder::stroke(px(2.));
+        let width = if style == Line::Thin { 1.25 } else { 2.0 };
+        let mut line = PathBuilder::stroke(px(width));
         line.move_to(plot.pos(run[0]));
         for p in run.iter().skip(1) {
             line.line_to(plot.pos(*p));
@@ -399,7 +410,8 @@ fn paint_series(plot: &Plot, pts: &[(i64, f64)], color: u32, area: bool, window:
 
     // Letzter Wert als markierter Endpunkt
     let last = pts[pts.len() - 1];
-    ringed_dot(window, plot.sx(last.0), plot.sy(last.1), 4.0, color);
+    let r = if style == Line::Thin { 3.0 } else { 4.0 };
+    ringed_dot(window, plot.sx(last.0), plot.sy(last.1), r, color);
 }
 
 /// Die Messung, deren Zeitpunkt der Maus waagerecht am nächsten liegt.
@@ -455,7 +467,7 @@ fn paint_line_chart(spec: &ChartSpec, bounds: Bounds<Pixels>, window: &mut Windo
     let tick_decimals = if step.fract().abs() < 1e-9 { 0 } else { 1 };
     paint_grid(&plot, step, lo, |v| fmt_num(v, tick_decimals), window, cx);
     paint_time_axis(&plot, window, cx);
-    paint_series(&plot, pts, spec.color, true, window);
+    paint_series(&plot, pts, spec.color, Line::Area, window);
 
     // Hover: Fadenkreuz rastet auf die nächstgelegene Messung ein
     let mouse = window.mouse_position();
@@ -545,7 +557,8 @@ fn paint_multi_chart(series: &[Series], bounds: Bounds<Pixels>, window: &mut Win
     );
     paint_time_axis(&plot, window, cx);
     for (s, change) in series.iter().zip(&changes) {
-        paint_series(&plot, change, s.color, false, window);
+        let style = if s.thin { Line::Thin } else { Line::Plain };
+        paint_series(&plot, change, s.color, style, window);
     }
 
     // Hover: Fadenkreuz auf der nächstgelegenen Messung, Tooltip mit den echten Werten
@@ -566,7 +579,7 @@ fn paint_multi_chart(series: &[Series], bounds: Bounds<Pixels>, window: &mut Win
             continue;
         };
         ringed_dot(window, hx, plot.sy(change[i].1), 3.5, s.color);
-        let label = shape(window, s.label, 12.0, theme::TEXT_SECONDARY, false);
+        let label = shape(window, &s.label, 12.0, theme::TEXT_SECONDARY, false);
         let value = shape(
             window,
             &with_unit(&fmt_num(s.points[i].1, s.decimals), s.unit),
