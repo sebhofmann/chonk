@@ -1,4 +1,4 @@
-# Chonk
+# <img src="assets/icons/chonk-icon-128.png" alt="" width="48" align="top"> Chonk
 
 A desktop app (Rust + [gpui](https://www.gpui.rs)) that reads the measurements
 of a Tanita body composition scale (tested with the BC-601) from its SD card,

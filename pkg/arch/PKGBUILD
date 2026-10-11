@@ -1,13 +1,13 @@
 # Maintainer: Sebastian Hofmann (github.com/sebhofmann)
 
 pkgname=chonk
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc="Reads Tanita body composition scale measurements from the SD card and shows them as charts"
 arch=('x86_64')
 url="https://github.com/sebhofmann/chonk"
 license=('MIT')
-depends=('gcc-libs' 'glibc' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'vulkan-icd-loader')
+depends=('gcc-libs' 'glibc' 'hicolor-icon-theme' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'vulkan-icd-loader')
 makedepends=('cargo' 'clang' 'cmake' 'git')
 optdepends=('wayland: Wayland support')
 # Die gebündelte SQLite-Bibliothek ist C-Code und verträgt sich nicht mit dem LTO von makepkg.
@@ -40,6 +40,12 @@ package() {
   install -Dm755 target/release/chonk "$pkgdir/usr/bin/chonk"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  local size
+  for size in 16 32 64 128 256 512; do
+    install -Dm644 "assets/icons/chonk-icon-$size.png" \
+      "$pkgdir/usr/share/icons/hicolor/${size}x$size/apps/chonk.png"
+  done
+  install -Dm644 assets/icons/chonk-icon.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/chonk.svg"
   install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/chonk.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
@@ -47,6 +53,8 @@ Name=Chonk
 Comment=Charts for Tanita body composition scale measurements
 Comment[de]=Diagramme für Messwerte einer Tanita-Körperanalysewaage
 Exec=chonk
+Icon=chonk
+StartupWMClass=chonk
 Terminal=false
 Categories=Utility;
 DESKTOP

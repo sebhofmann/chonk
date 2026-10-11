@@ -70,6 +70,8 @@ fn main() {
                     title: Some("Chonk".into()),
                     ..Default::default()
                 }),
+                // Ordnet das Fenster unter Linux dem Desktop-Eintrag und damit dem Icon zu.
+                app_id: Some("chonk".into()),
                 ..Default::default()
             },
             |_, cx| cx.new(|cx| ChonkApp::new(db, cx)),

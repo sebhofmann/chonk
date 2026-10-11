@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <path id="cat" d="M330 700
+      C270 690 255 600 282 520
+      C252 505 234 470 240 432
+      C238 416 244 402 254 394
+      C262 362 282 336 304 322
+      L314 226
+      L372 296
+      C392 290 410 288 428 290
+      L470 228
+      L486 312
+      C520 330 545 338 575 340
+      C730 330 830 450 818 585
+      C812 660 770 700 705 700 Z"/>
+    <clipPath id="catclip"><use href="#cat"/></clipPath>
+  </defs>
+
+  <!-- Background tile -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#F4F4F2"/>
+
+  <!-- Scale -->
+  <rect x="196" y="700" width="632" height="112" rx="42" fill="#FFFFFF" stroke="#111111" stroke-width="22"/>
+  <rect x="440" y="728" width="144" height="56" rx="16" fill="#111111"/>
+  <polyline points="458,744 482,756 504,750 528,766 548,760 566,770" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Tail -->
+  <path d="M780 650 C885 655 895 545 838 500" fill="none" stroke="#111111" stroke-width="58" stroke-linecap="round"/>
+
+  <!-- Body -->
+  <use href="#cat" fill="#FFFFFF"/>
+  <g clip-path="url(#catclip)">
+    <path d="M500 300 C600 380 700 360 760 300 L900 300 L900 520 C820 470 700 450 620 420 C560 400 520 360 500 300 Z" fill="#111111"/>
+    <path d="M410 250 L500 250 L500 330 C470 320 440 300 410 250 Z" fill="#111111"/>
+  </g>
+  <use href="#cat" fill="none" stroke="#111111" stroke-width="22" stroke-linejoin="round"/>
+
+  <!-- Inner ear -->
+  <path d="M324 262 L352 292" stroke="#111111" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- Hind leg -->
+  <path d="M600 700 C570 630 610 560 690 555 C760 552 790 610 772 680" fill="none" stroke="#111111" stroke-width="18" stroke-linecap="round"/>
+  <!-- Front paw -->
+  <path d="M318 700 C318 668 345 656 385 658 C425 660 446 676 446 700" fill="#FFFFFF" stroke="#111111" stroke-width="18" stroke-linejoin="round"/>
+  <path d="M382 662 L382 690" stroke="#111111" stroke-width="10" stroke-linecap="round"/>
+
+  <!-- Face -->
+  <ellipse cx="300" cy="398" rx="15" ry="20" fill="#111111"/>
+  <circle cx="295" cy="391" r="5" fill="#FFFFFF"/>
+  <path d="M243 396 L260 392 L256 410 Z" fill="#111111" stroke="#111111" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M256 412 Q262 432 284 428" fill="none" stroke="#111111" stroke-width="9" stroke-linecap="round"/>
+  <ellipse cx="320" cy="440" rx="26" ry="14" fill="#111111" opacity="0.12"/>
+  <g stroke="#111111" stroke-width="7" stroke-linecap="round">
+    <line x1="270" y1="430" x2="176" y2="414"/>
+    <line x1="272" y1="440" x2="180" y2="452"/>
+  </g>
+</svg>
