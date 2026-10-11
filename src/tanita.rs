@@ -70,7 +70,7 @@ fn tokenize(line: &str) -> Result<HashMap<&str, &str>> {
         .map(|t| t.trim().trim_matches('"'))
         .collect();
     if !tokens.len().is_multiple_of(2) {
-        bail!("ungerade Anzahl an Feldern ({})", tokens.len());
+        bail!("odd number of fields ({})", tokens.len());
     }
     Ok(tokens.chunks(2).map(|c| (c[0], c[1])).collect())
 }
@@ -100,20 +100,23 @@ fn int(map: &HashMap<&str, &str>, key: &str) -> Option<i64> {
 }
 
 fn parse_date(s: &str) -> Result<NaiveDate> {
-    NaiveDate::parse_from_str(s, "%d/%m/%Y").with_context(|| format!("ungültiges Datum {s:?}"))
+    NaiveDate::parse_from_str(s, "%d/%m/%Y").with_context(|| format!("invalid date {s:?}"))
 }
 
 /// Parst eine Zeile aus DATAn.CSV.
 pub fn parse_measurement(line: &str, profile: u8) -> Result<Measurement> {
     if !checksum_ok(line) {
-        bail!("Prüfsumme stimmt nicht");
+        bail!("checksum mismatch");
     }
     let map = tokenize(line)?;
-    let date = parse_date(map.get("DT").ok_or_else(|| anyhow!("Datum (DT) fehlt"))?)?;
+    let date = parse_date(
+        map.get("DT")
+            .ok_or_else(|| anyhow!("date (DT) is missing"))?,
+    )?;
     let time_str = map.get("Ti").copied().unwrap_or("00:00:00");
     let time = NaiveTime::parse_from_str(time_str, "%H:%M:%S")
-        .with_context(|| format!("ungültige Uhrzeit {time_str:?}"))?;
-    let weight_kg = num(&map, "Wk").ok_or_else(|| anyhow!("Gewicht (Wk) fehlt"))?;
+        .with_context(|| format!("invalid time {time_str:?}"))?;
+    let weight_kg = num(&map, "Wk").ok_or_else(|| anyhow!("weight (Wk) is missing"))?;
 
     Ok(Measurement {
         profile,
@@ -150,7 +153,7 @@ pub fn parse_measurement(line: &str, profile: u8) -> Result<Measurement> {
 /// Parst die Profilzeile aus PROFn.CSV.
 pub fn parse_profile(line: &str, slot: u8) -> Result<Profile> {
     if !checksum_ok(line) {
-        bail!("Prüfsumme stimmt nicht");
+        bail!("checksum mismatch");
     }
     let map = tokenize(line)?;
     Ok(Profile {

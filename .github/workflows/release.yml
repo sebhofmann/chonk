@@ -42,20 +42,20 @@ jobs:
         run: |
           ./script/linux-deps.sh
           cargo build --release --locked
-          tar -C target/release -czf "fettsack-$TAG-linux-x86_64.tar.gz" fettsack
-          gh release upload "$TAG" "fettsack-$TAG-linux-x86_64.tar.gz" --clobber
+          tar -C target/release -czf "chonk-$TAG-linux-x86_64.tar.gz" chonk
+          gh release upload "$TAG" "chonk-$TAG-linux-x86_64.tar.gz" --clobber
 
       - name: macOS bauen und packen
         if: runner.os == 'macOS'
         run: |
-          ./script/bundle-macos.sh "${TAG#v}" "Fettsack-$TAG-macos-universal.zip"
-          gh release upload "$TAG" "Fettsack-$TAG-macos-universal.zip" --clobber
+          ./script/bundle-macos.sh "${TAG#v}" "Chonk-$TAG-macos-universal.zip"
+          gh release upload "$TAG" "Chonk-$TAG-macos-universal.zip" --clobber
 
       - name: Windows bauen und packen
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cargo build --release --locked
-          $zip = "fettsack-$env:TAG-windows-x86_64.zip"
-          Compress-Archive -Path target/release/fettsack.exe -DestinationPath $zip
+          $zip = "chonk-$env:TAG-windows-x86_64.zip"
+          Compress-Archive -Path target/release/chonk.exe -DestinationPath $zip
           gh release upload $env:TAG $zip --clobber

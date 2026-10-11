@@ -1,4 +1,4 @@
-//! Lokales Archiv in SQLite (`~/.fettsack/fettsack.db`).
+//! Lokales Archiv in SQLite (`~/.chonk/chonk.db`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS measurements (
     UNIQUE (profile, measured_at)
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS imports (
     id           INTEGER PRIMARY KEY,
     imported_at  TEXT NOT NULL,
@@ -78,13 +83,30 @@ pub struct ImportStats {
     pub new: usize,
 }
 
-/// Datenordner der App: `~/.fettsack` (oder `FETTSACK_HOME`).
+/// Datenordner der App: `~/.chonk` (oder `CHONK_HOME`).
 pub fn data_dir() -> Result<PathBuf> {
-    if let Ok(dir) = std::env::var("FETTSACK_HOME") {
+    if let Ok(dir) = std::env::var("CHONK_HOME") {
         return Ok(PathBuf::from(dir));
     }
-    let home = home_dir().context("Weder HOME noch USERPROFILE ist gesetzt")?;
-    Ok(home.join(".fettsack"))
+    let home = home_dir().context("neither HOME nor USERPROFILE is set")?;
+    Ok(home.join(".chonk"))
+}
+
+/// Datenordner und Datenbankdatei aus der Zeit, als die App „Fettsack“ hieß.
+const LEGACY_DIR: &str = ".fettsack";
+const LEGACY_DB: &str = "fettsack.db";
+
+/// Zieht ein Archiv aus der Zeit vor der Umbenennung um. Passiert nur, wenn es
+/// den neuen Ordner noch nicht gibt, damit nie etwas überschrieben wird.
+fn migrate_legacy_dir(legacy: &Path, dir: &Path) -> Result<()> {
+    if dir.exists() || !legacy.join(LEGACY_DB).is_file() {
+        return Ok(());
+    }
+    std::fs::rename(legacy, dir)
+        .with_context(|| format!("could not move {} to {}", legacy.display(), dir.display()))?;
+    std::fs::rename(dir.join(LEGACY_DB), dir.join("chonk.db"))
+        .context("could not rename the archive file")?;
+    Ok(())
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -104,14 +126,19 @@ pub fn display_path(path: &Path) -> String {
 impl Db {
     pub fn open_default() -> Result<Self> {
         let dir = data_dir()?;
+        if std::env::var_os("CHONK_HOME").is_none()
+            && let Some(home) = home_dir()
+        {
+            migrate_legacy_dir(&home.join(LEGACY_DIR), &dir)?;
+        }
         std::fs::create_dir_all(&dir)
-            .with_context(|| format!("{} konnte nicht angelegt werden", dir.display()))?;
-        Self::open(&dir.join("fettsack.db"))
+            .with_context(|| format!("could not create {}", dir.display()))?;
+        Self::open(&dir.join("chonk.db"))
     }
 
     pub fn open(path: &Path) -> Result<Self> {
-        let conn = Connection::open(path)
-            .with_context(|| format!("{} konnte nicht geöffnet werden", path.display()))?;
+        let conn =
+            Connection::open(path).with_context(|| format!("could not open {}", path.display()))?;
         conn.execute_batch(SCHEMA)?;
         // Migration: Archive aus älteren Versionen kennen noch keine Profilnamen.
         let has_name = conn
@@ -324,6 +351,23 @@ impl Db {
         Ok(())
     }
 
+    pub fn setting(&self, key: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT value FROM settings WHERE key = ?1")?;
+        let mut rows = stmt.query_map([key], |r| r.get(0))?;
+        Ok(rows.next().transpose()?)
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
     /// Zeitpunkt des letzten Imports.
     pub fn last_import(&self) -> Result<Option<NaiveDateTime>> {
         let ts: Option<String> =
@@ -356,6 +400,36 @@ mod tests {
     }
 
     #[test]
+    fn settings_round_trip() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        assert_eq!(db.setting("language").unwrap(), None);
+        db.set_setting("language", "de").unwrap();
+        db.set_setting("language", "en").unwrap();
+        assert_eq!(db.setting("language").unwrap().as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn moves_a_legacy_archive_once() {
+        let root = std::env::temp_dir().join(format!("chonk-legacy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (legacy, dir) = (root.join(LEGACY_DIR), root.join(".chonk"));
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join(LEGACY_DB), b"archiv").unwrap();
+
+        migrate_legacy_dir(&legacy, &dir).unwrap();
+        assert!(!legacy.exists());
+        assert_eq!(std::fs::read(dir.join("chonk.db")).unwrap(), b"archiv");
+
+        // Ein später wieder auftauchender alter Ordner überschreibt nichts.
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join(LEGACY_DB), b"alt").unwrap();
+        migrate_legacy_dir(&legacy, &dir).unwrap();
+        assert_eq!(std::fs::read(dir.join("chonk.db")).unwrap(), b"archiv");
+        assert!(legacy.exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn profile_names_survive_a_reimport() {
         let mut db = Db::open(Path::new(":memory:")).unwrap();
         let profile = crate::tanita::Profile {
@@ -382,7 +456,7 @@ mod tests {
 
     #[test]
     fn migrates_an_archive_without_names() {
-        let path = std::env::temp_dir().join(format!("fettsack-mig-{}.db", std::process::id()));
+        let path = std::env::temp_dir().join(format!("chonk-mig-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         {
             let conn = Connection::open(&path).unwrap();

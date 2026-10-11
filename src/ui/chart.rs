@@ -7,7 +7,8 @@ use gpui::{
 };
 
 use super::theme;
-use crate::model::{fmt_num, with_unit};
+use crate::i18n::{Lang, lang, text};
+use crate::model::{fmt_date_time, fmt_num, with_unit};
 
 const DAY: i64 = 86_400;
 
@@ -144,10 +145,6 @@ fn y_scale(min: f64, max: f64, target: usize) -> (f64, f64, f64) {
     (lo, hi, step)
 }
 
-const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez",
-];
-
 fn date_of(ts: i64) -> NaiveDate {
     DateTime::from_timestamp(ts, 0)
         .map(|d| d.date_naive())
@@ -159,7 +156,12 @@ fn ts_of(date: NaiveDate) -> i64 {
 }
 
 /// Achsenmarken für die Zeitachse, je nach Spanne Tage, Wochen, Monate oder Jahre.
-fn time_ticks(t0: i64, t1: i64) -> Vec<(i64, String)> {
+fn time_ticks(t0: i64, t1: i64, lang: Lang) -> Vec<(i64, String)> {
+    let months = text(lang).months;
+    let day_format = match lang {
+        Lang::De => "%d.%m.",
+        Lang::En => "%d %b",
+    };
     let span_days = (t1 - t0) / DAY;
     let start = date_of(t0);
     let end = date_of(t1);
@@ -174,7 +176,7 @@ fn time_ticks(t0: i64, t1: i64) -> Vec<(i64, String)> {
             }
         }
         while d <= end {
-            ticks.push((ts_of(d), d.format("%d.%m.").to_string()));
+            ticks.push((ts_of(d), d.format(day_format).to_string()));
             d += Duration::days(step);
         }
     } else {
@@ -194,9 +196,9 @@ fn time_ticks(t0: i64, t1: i64) -> Vec<(i64, String)> {
                 let label = if month_step == 12 {
                     format!("{y}")
                 } else if m == 1 || month_step == 3 {
-                    format!("{} {:02}", MONTHS[(m - 1) as usize], y % 100)
+                    format!("{} {:02}", months[(m - 1) as usize], y % 100)
                 } else {
-                    MONTHS[(m - 1) as usize].to_string()
+                    months[(m - 1) as usize].to_string()
                 };
                 ticks.push((ts_of(d), label));
             }
@@ -260,7 +262,7 @@ fn paint_line_chart(spec: &ChartSpec, bounds: Bounds<Pixels>, window: &mut Windo
 
     // x-Beschriftung, überlappende Marken werden ausgelassen
     let mut last_right = f32::NEG_INFINITY;
-    for (ts, text) in time_ticks(t0, t1) {
+    for (ts, text) in time_ticks(t0, t1, lang()) {
         let x = sx(ts);
         let label = shape(window, &text, 11.0, theme::TEXT_MUTED, false);
         let lw = f32::from(label.width);
@@ -358,7 +360,7 @@ fn paint_line_chart(spec: &ChartSpec, bounds: Bounds<Pixels>, window: &mut Windo
         true,
     );
     let when = DateTime::from_timestamp(hit.0, 0)
-        .map(|d| d.format("%d.%m.%Y, %H:%M").to_string())
+        .map(|d| fmt_date_time(d.naive_utc()))
         .unwrap_or_default();
     let date = shape(window, &when, 11.0, theme::TEXT_SECONDARY, false);
     let tw = f32::from(value.width).max(f32::from(date.width)) + 20.0;
@@ -395,13 +397,17 @@ mod tests {
     #[test]
     fn time_ticks_adapt_to_span() {
         let t = |y, m, d| ts_of(NaiveDate::from_ymd_opt(y, m, d).unwrap());
-        let months = time_ticks(t(2024, 6, 26), t(2025, 1, 24));
+        let months = time_ticks(t(2024, 6, 26), t(2025, 1, 24), Lang::De);
         assert_eq!(months.first().unwrap().1, "Jul");
         assert_eq!(months.last().unwrap().1, "Jan 25");
-        let quarters = time_ticks(t(2024, 6, 26), t(2026, 9, 21));
+        let quarters = time_ticks(t(2024, 6, 26), t(2026, 9, 21), Lang::De);
         assert_eq!(quarters.first().unwrap().1, "Jul 24");
         assert_eq!(quarters.len(), 9);
-        let weeks = time_ticks(t(2026, 8, 1), t(2026, 9, 21));
+        let weeks = time_ticks(t(2026, 8, 1), t(2026, 9, 21), Lang::De);
         assert_eq!(weeks.first().unwrap().1, "03.08.");
+        let weeks = time_ticks(t(2026, 8, 1), t(2026, 9, 21), Lang::En);
+        assert_eq!(weeks.first().unwrap().1, "03 Aug");
+        let months = time_ticks(t(2025, 9, 1), t(2026, 6, 1), Lang::En);
+        assert_eq!(months[1].1, "Oct");
     }
 }

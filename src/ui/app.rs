@@ -14,9 +14,10 @@ use gpui::{
 use super::chart::{ChartSpec, line_chart, sparkline};
 use super::theme;
 use crate::db::Db;
+use crate::i18n::{self, Lang, t};
 use crate::model::{
-    Better, Metric, Range, Status, bmi_status, fat_status, fmt_date, fmt_date_time, fmt_num,
-    visceral_status,
+    Better, Metric, Range, Status, bmi_status, fat_status, fmt_date, fmt_date_time, fmt_day,
+    fmt_num, visceral_status,
 };
 use crate::sdcard;
 use crate::tanita::{Measurement, Profile};
@@ -30,7 +31,7 @@ enum Tab {
     Table,
 }
 
-pub struct FettsackApp {
+pub struct ChonkApp {
     db: Db,
     /// Profil-Slots mit Messungen und deren Anzahl.
     slots: Vec<(u8, usize)>,
@@ -50,7 +51,7 @@ pub struct FettsackApp {
     message: Option<String>,
 }
 
-impl FettsackApp {
+impl ChonkApp {
     pub fn new(db: Db, cx: &mut Context<Self>) -> Self {
         let mut app = Self {
             db,
@@ -98,7 +99,7 @@ impl FettsackApp {
             Ok(())
         })();
         if let Err(e) = result {
-            self.message = Some(format!("Archiv nicht lesbar: {e:#}"));
+            self.message = Some(t().archive_unreadable(&format!("{e:#}")));
         }
     }
 
@@ -117,7 +118,7 @@ impl FettsackApp {
 
     fn import(&mut self, cx: &mut Context<Self>) {
         let Some(card) = self.card.clone() else {
-            self.message = Some("Keine SD-Karte gefunden.".into());
+            self.message = Some(t().no_card_found.into());
             cx.notify();
             return;
         };
@@ -132,19 +133,16 @@ impl FettsackApp {
         self.message = Some(match result {
             Ok((stats, warnings)) => {
                 for w in &warnings {
-                    eprintln!("Import-Warnung: {w}");
+                    eprintln!("import warning: {w}");
                 }
-                let mut msg = match stats.new {
-                    0 => format!("{} Messungen gelesen, alle bereits archiviert", stats.seen),
-                    1 => format!("{} Messungen gelesen, 1 neu archiviert", stats.seen),
-                    n => format!("{} Messungen gelesen, {n} neu archiviert", stats.seen),
-                };
+                let mut msg = t().import_result(stats.seen, stats.new);
                 if !warnings.is_empty() {
-                    msg.push_str(&format!(" · {} Zeilen übersprungen", warnings.len()));
+                    msg.push_str(" · ");
+                    msg.push_str(&t().lines_skipped(warnings.len()));
                 }
                 msg
             }
-            Err(e) => format!("Import fehlgeschlagen: {e:#}"),
+            Err(e) => t().import_failed(&format!("{e:#}")),
         });
         self.reload();
         cx.notify();
@@ -156,7 +154,7 @@ impl FettsackApp {
         self.names
             .get(&slot)
             .cloned()
-            .unwrap_or_else(|| format!("Profil {slot}"))
+            .unwrap_or_else(|| t().profile(slot))
     }
 
     fn start_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -171,7 +169,7 @@ impl FettsackApp {
         };
         if save {
             if let Err(e) = self.db.set_profile_name(self.profile, &name) {
-                self.message = Some(format!("Name nicht gespeichert: {e:#}"));
+                self.message = Some(t().not_saved(&format!("{e:#}")));
             }
             self.reload();
         }
@@ -233,7 +231,7 @@ impl FettsackApp {
                     d.child(
                         div()
                             .text_color(rgb(theme::TEXT_MUTED))
-                            .child(format!("Name für Profil {}", self.profile)),
+                            .child(t().name_for_profile(self.profile)),
                     )
                 })
                 .into_any_element(),
@@ -251,7 +249,7 @@ impl FettsackApp {
                     div()
                         .text_size(px(11.))
                         .text_color(rgb(theme::TEXT_MUTED))
-                        .child("umbenennen"),
+                        .child(t().rename),
                 )
                 .into_any_element(),
         }
@@ -269,19 +267,16 @@ impl FettsackApp {
                 facts.push(format!("{} cm", fmt_num(h, 0)));
             }
             if let Some(b) = p.birth_date {
-                facts.push(format!("geboren {}", b.format("%d.%m.%Y")));
+                facts.push(t().born(&fmt_day(b)));
             }
         }
         if facts.is_empty() {
-            facts.push("Körperanalyse-Archiv".into());
+            facts.push(t().archive_subtitle.into());
         }
 
         let (pill_color, pill_text) = match &self.card {
-            Some(card) => (
-                theme::GOOD,
-                format!("SD-Karte „{}“ verbunden", sdcard::volume_name(card)),
-            ),
-            None => (theme::TEXT_MUTED, "Keine SD-Karte eingelegt".to_string()),
+            Some(card) => (theme::GOOD, t().card_connected(&sdcard::volume_name(card))),
+            None => (theme::TEXT_MUTED, t().no_card.to_string()),
         };
         let can_import = self.card.is_some();
 
@@ -302,7 +297,7 @@ impl FettsackApp {
                         div()
                             .text_size(px(22.))
                             .font_weight(FontWeight::BOLD)
-                            .child("Fettsack"),
+                            .child("Chonk"),
                     )
                     .child(
                         div()
@@ -365,7 +360,7 @@ impl FettsackApp {
                                 d.bg(rgb(theme::SURFACE_RAISED))
                                     .text_color(rgb(theme::TEXT_MUTED))
                             })
-                            .child("Jetzt importieren"),
+                            .child(t().import_now),
                     ),
             )
     }
@@ -416,7 +411,7 @@ impl FettsackApp {
 
         let ranges = group().children(Range::ALL.into_iter().map(|r| {
             self.segment_button(
-                format!("range-{}", r.label()),
+                format!("range-{r:?}"),
                 r.label(),
                 self.range == r,
                 cx,
@@ -427,14 +422,14 @@ impl FettsackApp {
         let tabs = group()
             .child(self.segment_button(
                 "tab-overview",
-                "Übersicht",
+                t().overview,
                 self.tab == Tab::Overview,
                 cx,
                 |this, _| this.tab = Tab::Overview,
             ))
             .child(self.segment_button(
                 "tab-table",
-                "Messungen",
+                t().measurements,
                 self.tab == Tab::Table,
                 cx,
                 |this, _| this.tab = Tab::Table,
@@ -469,22 +464,57 @@ impl FettsackApp {
             .child(tabs)
     }
 
-    fn footer(&self) -> impl IntoElement {
+    fn set_language(&mut self, lang: Lang, cx: &mut Context<Self>) {
+        i18n::set_lang(lang);
+        if let Err(e) = self.db.set_setting("language", lang.code()) {
+            self.message = Some(t().not_saved(&format!("{e:#}")));
+        } else {
+            // Die Statusmeldung stammt noch aus der alten Sprache.
+            self.message = None;
+        }
+        crate::set_menus(cx);
+        cx.notify();
+    }
+
+    fn footer(&self, cx: &Context<Self>) -> impl IntoElement {
         let mut parts = vec![
-            format!("Archiv: {}", crate::db::display_path(self.db.path())),
-            format!("{} Messungen", self.data.len()),
+            t().archive_path(&crate::db::display_path(self.db.path())),
+            t().measurement_count(self.data.len()),
         ];
         if let Some(ts) = self.last_import {
-            parts.push(format!("letzter Import {}", fmt_date_time(ts)));
+            parts.push(t().last_import(&fmt_date_time(ts)));
         }
+        let languages = Lang::ALL.into_iter().map(|lang| {
+            let active = i18n::lang() == lang;
+            div()
+                .id(SharedString::from(format!("lang-{}", lang.code())))
+                .px_1p5()
+                .py_0p5()
+                .rounded(px(4.))
+                .cursor_pointer()
+                .when(active, |d| {
+                    d.bg(rgb(theme::SURFACE_RAISED))
+                        .text_color(rgb(theme::TEXT))
+                        .font_weight(FontWeight::SEMIBOLD)
+                })
+                .when(!active, |d| d.hover(|s| s.bg(rgb(theme::GRID))))
+                .on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| this.set_language(lang, cx)),
+                )
+                .child(lang.code().to_uppercase())
+        });
         div()
+            .flex()
+            .items_center()
+            .justify_between()
             .px_6()
-            .py_2()
+            .py_1p5()
             .border_t_1()
             .border_color(rgb(theme::BORDER))
             .text_size(px(11.))
             .text_color(rgb(theme::TEXT_MUTED))
             .child(parts.join("  ·  "))
+            .child(div().flex().items_center().gap_1().children(languages))
     }
 
     // ----------------------------------------------------------- Übersicht
@@ -504,11 +534,11 @@ impl FettsackApp {
             (Some(met), Some(age)) => {
                 let diff = age as f64 - met;
                 Some(if diff >= 1.0 {
-                    format!("{} Jahre jünger als tatsächlich", fmt_num(diff, 0))
+                    t().years_younger(&fmt_num(diff, 0))
                 } else if diff <= -1.0 {
-                    format!("{} Jahre älter als tatsächlich", fmt_num(-diff, 0))
+                    t().years_older(&fmt_num(-diff, 0))
                 } else {
-                    "entspricht dem tatsächlichen Alter".to_string()
+                    t().age_matches.to_string()
                 })
             }
             _ => None,
@@ -571,19 +601,12 @@ impl FettsackApp {
 
     fn empty_state(&self) -> AnyElement {
         let (title, hint) = if self.data.is_empty() {
-            (
-                "Noch keine Messungen archiviert".to_string(),
-                "Lege die SD-Karte der Waage ein. Die Daten werden automatisch importiert."
-                    .to_string(),
-            )
+            (t().no_data_title.to_string(), t().no_data_hint.to_string())
         } else {
             let last = self.data.last().map(|m| fmt_date(m.measured_at));
             (
-                format!("Keine Messungen im Zeitraum „{}“", self.range.label()),
-                format!(
-                    "Die letzte Messung ist vom {}. Wähle oben einen längeren Zeitraum.",
-                    last.unwrap_or_default()
-                ),
+                t().no_data_in_range(self.range.label()),
+                t().last_measurement_hint(&last.unwrap_or_default()),
             )
         };
         div()
@@ -615,20 +638,21 @@ impl FettsackApp {
                 .map(|v| m.format(v))
                 .unwrap_or_else(|| "–".into())
         }
+        let t = t();
         let columns: [(&str, f32, Cell); 11] = [
-            ("Datum", 1.3, |m| fmt_date(m.measured_at)),
-            ("Uhrzeit", 0.9, |m| {
+            (t.col_date, 1.3, |m| fmt_date(m.measured_at)),
+            (t.col_time, 0.9, |m| {
                 m.measured_at.format("%H:%M").to_string()
             }),
-            ("Gewicht kg", 1.0, |m| opt(Metric::Weight, m)),
-            ("BMI", 0.8, |m| opt(Metric::Bmi, m)),
-            ("Fett %", 0.8, |m| opt(Metric::Fat, m)),
-            ("Muskeln kg", 1.0, |m| opt(Metric::Muscle, m)),
-            ("Wasser %", 0.9, |m| opt(Metric::Water, m)),
-            ("Knochen kg", 1.0, |m| opt(Metric::Bone, m)),
-            ("Viszeralfett", 1.0, |m| opt(Metric::Visceral, m)),
-            ("Stoffw.-Alter", 1.1, |m| opt(Metric::MetabolicAge, m)),
-            ("Bedarf kcal", 1.0, |m| opt(Metric::Dci, m)),
+            (t.col_weight, 1.0, |m| opt(Metric::Weight, m)),
+            (t.bmi, 0.8, |m| opt(Metric::Bmi, m)),
+            (t.col_fat, 0.8, |m| opt(Metric::Fat, m)),
+            (t.col_muscle, 1.0, |m| opt(Metric::Muscle, m)),
+            (t.col_water, 0.9, |m| opt(Metric::Water, m)),
+            (t.col_bone, 1.0, |m| opt(Metric::Bone, m)),
+            (t.visceral_fat, 1.0, |m| opt(Metric::Visceral, m)),
+            (t.col_metabolic_age, 1.1, |m| opt(Metric::MetabolicAge, m)),
+            (t.col_calories, 1.0, |m| opt(Metric::Dci, m)),
         ];
 
         let row = |header: bool| {
@@ -700,7 +724,7 @@ impl FettsackApp {
     }
 }
 
-impl Render for FettsackApp {
+impl Render for ChonkApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = Local::now().naive_local();
         let visible = self.range.filter(&self.data, now);
@@ -721,7 +745,7 @@ impl Render for FettsackApp {
             .child(self.header(cx))
             .child(self.toolbar(cx))
             .child(body)
-            .child(self.footer())
+            .child(self.footer(cx))
     }
 }
 
@@ -779,12 +803,12 @@ fn delta_row(metric: Metric, data: &[Measurement]) -> Div {
     let (Some((since, a)), Some((_, b))) = (first, last) else {
         return row
             .text_color(rgb(theme::TEXT_MUTED))
-            .child("einzige Messung im Zeitraum");
+            .child(t().only_measurement);
     };
     let diff = b - a;
     let threshold = 0.5 * 10f64.powi(-(metric.decimals() as i32));
     if diff.abs() < threshold {
-        return row.child(format!("unverändert seit {}", fmt_date(since)));
+        return row.child(t().unchanged_since(&fmt_date(since)));
     }
     let improved = match metric.better() {
         Better::Lower => Some(diff < 0.0),
@@ -803,10 +827,9 @@ fn delta_row(metric: Metric, data: &[Measurement]) -> Div {
             .text_color(rgb(color))
             .child(if diff > 0.0 { "▲" } else { "▼" }),
     )
-    .child(format!(
-        "{sign}{} seit {}",
-        metric.format_with_unit(diff.abs()),
-        fmt_date(since)
+    .child(t().change_since(
+        &format!("{sign}{}", metric.format_with_unit(diff.abs())),
+        &fmt_date(since),
     ))
 }
 
@@ -853,7 +876,7 @@ fn hero(visible: &[Measurement], latest: &Measurement) -> Div {
             div()
                 .text_size(px(12.))
                 .text_color(rgb(theme::TEXT_SECONDARY))
-                .child("Aktuelles Gewicht"),
+                .child(t().current_weight),
         )
         .child(
             div()
@@ -881,7 +904,7 @@ fn hero(visible: &[Measurement], latest: &Measurement) -> Div {
                 .mt_1()
                 .text_size(px(12.))
                 .text_color(rgb(theme::TEXT_MUTED))
-                .child(format!("gemessen am {}", fmt_date_time(latest.measured_at))),
+                .child(t().measured_on(&fmt_date_time(latest.measured_at))),
         )
         .child(div().flex_1().min_h(px(16.)))
         .child(
@@ -892,15 +915,19 @@ fn hero(visible: &[Measurement], latest: &Measurement) -> Div {
                 .pt_3()
                 .border_t_1()
                 .border_color(rgb(theme::GRID))
-                .child(stat("Tiefstwert", min))
-                .child(stat("Höchstwert", max))
-                .child(stat("Durchschnitt", avg))
+                .child(stat(t().lowest, min))
+                .child(stat(t().highest, max))
+                .child(stat(t().average, avg))
                 .child(
                     div()
                         .flex()
                         .justify_between()
                         .text_size(px(12.))
-                        .child(div().text_color(rgb(theme::TEXT_MUTED)).child("Messungen"))
+                        .child(
+                            div()
+                                .text_color(rgb(theme::TEXT_MUTED))
+                                .child(t().measurements),
+                        )
                         .child(
                             div()
                                 .text_color(rgb(theme::TEXT_SECONDARY))
@@ -980,7 +1007,7 @@ fn chart_card(metric: Metric, color: u32, data: &[Measurement], height: f32) -> 
     let unit = if metric.unit().is_empty() {
         String::new()
     } else {
-        format!("in {}", metric.unit())
+        t().in_unit(metric.unit())
     };
     card()
         .flex()
@@ -1027,11 +1054,11 @@ fn bar(value: Option<f64>, max: f64, color: u32, decimals: usize) -> Div {
 
 fn segments_card(m: &Measurement) -> Div {
     let rows: [(&str, Option<f64>, Option<f64>); 5] = [
-        ("Rechter Arm", m.fat_right_arm_pct, m.muscle_right_arm_kg),
-        ("Linker Arm", m.fat_left_arm_pct, m.muscle_left_arm_kg),
-        ("Rumpf", m.fat_trunk_pct, m.muscle_trunk_kg),
-        ("Rechtes Bein", m.fat_right_leg_pct, m.muscle_right_leg_kg),
-        ("Linkes Bein", m.fat_left_leg_pct, m.muscle_left_leg_kg),
+        (t().right_arm, m.fat_right_arm_pct, m.muscle_right_arm_kg),
+        (t().left_arm, m.fat_left_arm_pct, m.muscle_left_arm_kg),
+        (t().trunk, m.fat_trunk_pct, m.muscle_trunk_kg),
+        (t().right_leg, m.fat_right_leg_pct, m.muscle_right_leg_kg),
+        (t().left_leg, m.fat_left_leg_pct, m.muscle_left_leg_kg),
     ];
     let max_of = |vals: Vec<Option<f64>>| vals.into_iter().flatten().fold(1e-9, f64::max);
     let fat_max = max_of(rows.iter().map(|r| r.1).collect());
@@ -1051,16 +1078,16 @@ fn segments_card(m: &Measurement) -> Div {
         .flex_col()
         .gap_3()
         .child(card_title(
-            "Körpersegmente",
-            format!("Messung vom {}", fmt_date(m.measured_at)),
+            t().body_segments,
+            t().measurement_from(&fmt_date(m.measured_at)),
         ))
         .child(
             div()
                 .flex()
                 .gap_4()
                 .child(div().w(px(96.)).flex_none())
-                .child(heading("Fettanteil in %"))
-                .child(heading("Muskelmasse in kg")),
+                .child(heading(t().fat_in_percent))
+                .child(heading(t().muscle_in_kg)),
         )
         .children(rows.into_iter().map(|(label, fat, muscle)| {
             div()
@@ -1083,9 +1110,9 @@ fn segments_card(m: &Measurement) -> Div {
 fn composition_card(m: &Measurement) -> Div {
     let fat_kg = m.fat_pct.map(|f| m.weight_kg * f / 100.0);
     let parts: Vec<(&str, f64, u32)> = [
-        ("Fettmasse", fat_kg, theme::FAT),
-        ("Muskelmasse", m.muscle_kg, theme::MUSCLE),
-        ("Knochenmasse", m.bone_kg, theme::BONE),
+        (t().fat_mass, fat_kg, theme::FAT),
+        (t().muscle_mass, m.muscle_kg, theme::MUSCLE),
+        (t().bone_mass, m.bone_kg, theme::BONE),
     ]
     .into_iter()
     .filter_map(|(label, v, color)| Some((label, v?, color)))
@@ -1141,8 +1168,8 @@ fn composition_card(m: &Measurement) -> Div {
         .flex_col()
         .gap_3()
         .child(card_title(
-            "Zusammensetzung",
-            format!("von {} kg Körpergewicht", fmt_num(m.weight_kg, 1)),
+            t().composition,
+            t().of_body_weight(&fmt_num(m.weight_kg, 1)),
         ))
         .child(stack)
         .child(div().flex().flex_col().gap_2().children(legend))
@@ -1157,7 +1184,7 @@ fn composition_card(m: &Measurement) -> Div {
                 .child(
                     div()
                         .text_color(rgb(theme::TEXT_MUTED))
-                        .child("Fettfreie Masse"),
+                        .child(t().fat_free_mass),
                 )
                 .child(
                     div()

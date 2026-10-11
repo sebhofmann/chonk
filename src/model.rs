@@ -2,6 +2,7 @@
 
 use chrono::{Duration, NaiveDateTime};
 
+use crate::i18n::{Lang, lang, t};
 use crate::tanita::Measurement;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -27,16 +28,17 @@ pub enum Better {
 
 impl Metric {
     pub fn label(self) -> &'static str {
+        let t = t();
         match self {
-            Metric::Weight => "Gewicht",
-            Metric::Fat => "Körperfett",
-            Metric::Muscle => "Muskelmasse",
-            Metric::Water => "Körperwasser",
-            Metric::Bmi => "BMI",
-            Metric::Visceral => "Viszeralfett",
-            Metric::MetabolicAge => "Stoffwechselalter",
-            Metric::Dci => "Kalorienbedarf",
-            Metric::Bone => "Knochenmasse",
+            Metric::Weight => t.weight,
+            Metric::Fat => t.body_fat,
+            Metric::Muscle => t.muscle_mass,
+            Metric::Water => t.body_water,
+            Metric::Bmi => t.bmi,
+            Metric::Visceral => t.visceral_fat,
+            Metric::MetabolicAge => t.metabolic_age,
+            Metric::Dci => t.calorie_need,
+            Metric::Bone => t.bone_mass,
         }
     }
 
@@ -45,7 +47,7 @@ impl Metric {
             Metric::Weight | Metric::Muscle | Metric::Bone => "kg",
             Metric::Fat | Metric::Water => "%",
             Metric::Bmi | Metric::Visceral => "",
-            Metric::MetabolicAge => "Jahre",
+            Metric::MetabolicAge => t().years,
             Metric::Dci => "kcal",
         }
     }
@@ -127,12 +129,13 @@ impl Range {
     ];
 
     pub fn label(self) -> &'static str {
+        let t = t();
         match self {
-            Range::Days30 => "30 Tage",
-            Range::Days90 => "90 Tage",
-            Range::Months6 => "6 Monate",
-            Range::Year1 => "1 Jahr",
-            Range::All => "Alles",
+            Range::Days30 => t.days_30,
+            Range::Days90 => t.days_90,
+            Range::Months6 => t.months_6,
+            Range::Year1 => t.year_1,
+            Range::All => t.all,
         }
     }
 
@@ -169,13 +172,13 @@ pub enum Status {
 
 pub fn bmi_status(bmi: f64) -> (&'static str, Status) {
     if bmi < 18.5 {
-        ("Untergewicht", Status::Warning)
+        (t().underweight, Status::Warning)
     } else if bmi < 25.0 {
-        ("Normalgewicht", Status::Good)
+        (t().normal_weight, Status::Good)
     } else if bmi < 30.0 {
-        ("Übergewicht", Status::Warning)
+        (t().overweight, Status::Warning)
     } else {
-        ("Adipositas", Status::Serious)
+        (t().obese, Status::Serious)
     }
 }
 
@@ -193,26 +196,35 @@ pub fn fat_status(fat: f64, gender: Option<i64>, age: Option<i64>) -> (&'static 
         (true, _) => (24.0, 36.0, 42.0),
     };
     if fat < low {
-        ("niedrig", Status::Warning)
+        (t().low, Status::Warning)
     } else if fat < healthy {
-        ("gesunder Bereich", Status::Good)
+        (t().healthy_range, Status::Good)
     } else if fat < over {
-        ("erhöht", Status::Warning)
+        (t().elevated, Status::Warning)
     } else {
-        ("stark erhöht", Status::Serious)
+        (t().highly_elevated, Status::Serious)
     }
 }
 
 pub fn visceral_status(level: f64) -> (&'static str, Status) {
     if level <= 12.0 {
-        ("gesunder Bereich", Status::Good)
+        (t().healthy_range, Status::Good)
     } else {
-        ("erhöht", Status::Warning)
+        (t().elevated, Status::Warning)
     }
 }
 
-/// Zahl mit deutschem Dezimalkomma und Tausenderpunkt.
+/// Zahl in der Schreibweise der aktuellen Sprache.
 pub fn fmt_num(v: f64, decimals: usize) -> String {
+    fmt_num_in(v, decimals, lang())
+}
+
+/// Deutsch: Dezimalkomma und Tausenderpunkt. Englisch: umgekehrt.
+pub fn fmt_num_in(v: f64, decimals: usize, lang: Lang) -> String {
+    let (decimal_sep, group_sep) = match lang {
+        Lang::De => (',', '.'),
+        Lang::En => ('.', ','),
+    };
     let s = format!("{:.*}", decimals, v.abs());
     let (int, frac) = match s.split_once('.') {
         Some((i, f)) => (i, Some(f)),
@@ -220,8 +232,8 @@ pub fn fmt_num(v: f64, decimals: usize) -> String {
     };
     let mut grouped = String::new();
     for (i, ch) in int.chars().enumerate() {
-        if i > 0 && (int.len() - i) % 3 == 0 {
-            grouped.push('.');
+        if i > 0 && (int.len() - i).is_multiple_of(3) {
+            grouped.push(group_sep);
         }
         grouped.push(ch);
     }
@@ -232,18 +244,29 @@ pub fn fmt_num(v: f64, decimals: usize) -> String {
     }
     out.push_str(&grouped);
     if let Some(frac) = frac {
-        out.push(',');
+        out.push(decimal_sep);
         out.push_str(frac);
     }
     out
 }
 
+fn date_format(lang: Lang) -> &'static str {
+    match lang {
+        Lang::De => "%d.%m.%Y",
+        Lang::En => "%d %b %Y",
+    }
+}
+
 pub fn fmt_date(dt: NaiveDateTime) -> String {
-    dt.format("%d.%m.%Y").to_string()
+    dt.format(date_format(lang())).to_string()
+}
+
+pub fn fmt_day(date: chrono::NaiveDate) -> String {
+    date.format(date_format(lang())).to_string()
 }
 
 pub fn fmt_date_time(dt: NaiveDateTime) -> String {
-    dt.format("%d.%m.%Y, %H:%M").to_string()
+    format!("{}, {}", fmt_date(dt), dt.format("%H:%M"))
 }
 
 #[cfg(test)]
@@ -251,12 +274,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn formats_german_numbers() {
-        assert_eq!(fmt_num(73.44, 1), "73,4");
-        assert_eq!(fmt_num(2931.0, 0), "2.931");
-        assert_eq!(fmt_num(-6.2, 1), "−6,2");
-        assert_eq!(fmt_num(-0.04, 1), "0,0");
-        assert_eq!(fmt_num(1234567.0, 0), "1.234.567");
+    fn formats_numbers_per_language() {
+        assert_eq!(fmt_num_in(73.44, 1, Lang::De), "73,4");
+        assert_eq!(fmt_num_in(2931.0, 0, Lang::De), "2.931");
+        assert_eq!(fmt_num_in(-6.2, 1, Lang::De), "−6,2");
+        assert_eq!(fmt_num_in(-0.04, 1, Lang::De), "0,0");
+        assert_eq!(fmt_num_in(1234567.0, 0, Lang::De), "1.234.567");
+        assert_eq!(fmt_num_in(73.44, 1, Lang::En), "73.4");
+        assert_eq!(fmt_num_in(2931.0, 0, Lang::En), "2,931");
     }
 
     #[test]

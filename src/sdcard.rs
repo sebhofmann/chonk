@@ -57,10 +57,10 @@ fn volumes() -> Vec<PathBuf> {
 }
 
 /// Sucht eine eingelegte Tanita-Karte.
-/// Mit der Umgebungsvariable `FETTSACK_CARD` lässt sich ein Ordner erzwingen
+/// Mit der Umgebungsvariable `CHONK_CARD` lässt sich ein Ordner erzwingen
 /// (er muss dem Ordner `TANITA/GRAPHV1` entsprechen).
 pub fn find_card() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("FETTSACK_CARD") {
+    if let Ok(dir) = std::env::var("CHONK_CARD") {
         let path = PathBuf::from(dir);
         return child(&path, "DATA")?.is_dir().then_some(path);
     }
@@ -94,7 +94,7 @@ pub struct CardData {
 /// Die Waage speichert in Windows-Kodierung; für die reinen ASCII-Daten reicht
 /// eine verlustbehaftete UTF-8-Wandlung.
 fn read_text(path: &Path) -> Result<String> {
-    let bytes = fs::read(path).with_context(|| format!("{} nicht lesbar", path.display()))?;
+    let bytes = fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
@@ -130,7 +130,7 @@ pub fn read_card(card: &Path) -> Result<CardData> {
                 data.measurements.extend(parsed.measurements);
                 for (line, err) in parsed.errors {
                     data.warnings
-                        .push(format!("DATA{slot}.CSV Zeile {line}: {err}"));
+                        .push(format!("DATA{slot}.CSV line {line}: {err}"));
                 }
             }
             Err(e) => data.warnings.push(format!("{e:#}")),
@@ -138,7 +138,7 @@ pub fn read_card(card: &Path) -> Result<CardData> {
     }
 
     if !found_any {
-        anyhow::bail!("Keine DATA-Dateien in {} gefunden", card.display());
+        anyhow::bail!("no DATA files found in {}", card.display());
     }
     Ok(data)
 }
@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn finds_and_reads_a_card_regardless_of_case() {
-        let root = std::env::temp_dir().join(format!("fettsack-card-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("chonk-card-{}", std::process::id()));
         let card = root.join("tanita").join("GraphV1");
         fs::create_dir_all(card.join("data")).unwrap();
         fs::write(

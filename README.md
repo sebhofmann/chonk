@@ -1,4 +1,4 @@
-# Fettsack
+# Chonk
 
 Desktop-App (Rust + [gpui](https://www.gpui.rs)), die die Messungen einer
 Tanita-Körperanalysewaage (getestet mit der BC-601) von der SD-Karte liest,
@@ -15,9 +15,9 @@ Fertige Pakete hängen an den [Releases](../../releases):
 
 | System | Paket | Hinweis |
 |---|---|---|
-| macOS | `Fettsack-…-macos-universal.zip` | Die App ist nicht notarisiert. Beim ersten Start per Rechtsklick „Öffnen" wählen oder `xattr -dr com.apple.quarantine Fettsack.app` ausführen. |
-| Linux | `fettsack-…-linux-x86_64.tar.gz` | Braucht Vulkan sowie Wayland oder X11. |
-| Windows | `fettsack-…-windows-x86_64.zip` | `fettsack.exe` direkt starten. |
+| macOS | `Chonk-…-macos-universal.zip` | Die App ist nicht notarisiert. Beim ersten Start per Rechtsklick „Öffnen" wählen oder `xattr -dr com.apple.quarantine Chonk.app` ausführen. |
+| Linux | `chonk-…-linux-x86_64.tar.gz` | Braucht Vulkan sowie Wayland oder X11. |
+| Windows | `chonk-…-windows-x86_64.zip` | `chonk.exe` direkt starten. |
 
 ## Selbst bauen
 
@@ -36,6 +36,9 @@ eingelegt (beim Start oder später), werden neue Messungen automatisch
 importiert. Bereits archivierte Messungen werden übersprungen, die Karte wird
 nur gelesen.
 
+Die Oberfläche gibt es auf Deutsch und Englisch. Beim ersten Start richtet sie
+sich nach der Systemsprache, umschalten lässt sie sich unten rechts.
+
 Die Waage kennt acht Profile, aber keine Namen. Ein Klick auf den Profilnamen
 unter dem Titel vergibt einen eigenen Namen (Enter speichert, Esc bricht ab).
 
@@ -43,20 +46,24 @@ unter dem Titel vergibt einen eigenen Namen (Enter speichert, Esc bricht ab).
 
 | Was | Wo |
 |---|---|
-| Archiv | `~/.fettsack/fettsack.db` (SQLite), unter Windows `%USERPROFILE%\.fettsack` |
+| Archiv | `~/.chonk/chonk.db` (SQLite), unter Windows `%USERPROFILE%\.chonk` |
 | Messungen | Tabelle `measurements`, eindeutig je Profil und Zeitpunkt, inklusive Originalzeile in `raw` |
 | Profile | Tabelle `profiles` (Slot 1–8 der Waage, eigener Name in `name`) |
+| Einstellungen | Tabelle `settings` (zum Beispiel die Sprache) |
 | Importprotokoll | Tabelle `imports` |
 
-Umgebungsvariablen zum Testen: `FETTSACK_HOME` (anderer Datenordner) und
-`FETTSACK_CARD` (Pfad zu einem `TANITA/GRAPHV1`-Ordner statt der Karte).
+Die App hieß früher „Fettsack". Ein vorhandenes Archiv unter `~/.fettsack`
+wird beim ersten Start automatisch nach `~/.chonk` umgezogen.
+
+Umgebungsvariablen zum Testen: `CHONK_HOME` (anderer Datenordner) und
+`CHONK_CARD` (Pfad zu einem `TANITA/GRAPHV1`-Ordner statt der Karte).
 
 Eine Karte mit erfundenen Messwerten für zwei Profile erzeugt
 `script/fake-card.py`:
 
 ```sh
 python3 script/fake-card.py /tmp/demo/TANITA/GRAPHV1
-FETTSACK_HOME=/tmp/demo/home FETTSACK_CARD=/tmp/demo/TANITA/GRAPHV1 cargo run
+CHONK_HOME=/tmp/demo/home CHONK_CARD=/tmp/demo/TANITA/GRAPHV1 cargo run
 ```
 
 ## Dateiformat der Waage
@@ -86,6 +93,8 @@ Zeilen mit falscher Prüfsumme werden beim Import übersprungen.
 
 - gpui wird mit dem Feature `runtime_shaders` gebaut. Unter macOS genügen
   dadurch die Xcode Command Line Tools, ein vollständiges Xcode ist nicht nötig.
+- Übersetzungen stehen in `src/i18n.rs`. Feste Texte sind Felder einer
+  Struktur, der Compiler meldet also fehlende Übersetzungen.
 - Der Workflow `CI` prüft jeden Push unter Linux, macOS und Windows
   (Formatierung, Clippy, Tests). Abhängigkeiten werden zwischen den Läufen
   gecacht, reine Doku-Änderungen lösen keinen Lauf aus.
