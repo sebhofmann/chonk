@@ -27,6 +27,18 @@ pub enum Better {
 }
 
 impl Metric {
+    pub const ALL: [Metric; 9] = [
+        Metric::Weight,
+        Metric::Fat,
+        Metric::Muscle,
+        Metric::Water,
+        Metric::Bone,
+        Metric::Bmi,
+        Metric::Visceral,
+        Metric::MetabolicAge,
+        Metric::Dci,
+    ];
+
     pub fn label(self) -> &'static str {
         let t = t();
         match self {

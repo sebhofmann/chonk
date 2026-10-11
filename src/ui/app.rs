@@ -11,7 +11,7 @@ use gpui::{
     rgb,
 };
 
-use super::chart::{ChartSpec, line_chart, sparkline};
+use super::chart::{ChartSpec, Series, line_chart, multi_chart, sparkline};
 use super::theme;
 use crate::db::Db;
 use crate::i18n::{self, Lang, t};
@@ -47,6 +47,8 @@ pub struct ChonkApp {
     last_import: Option<NaiveDateTime>,
     range: Range,
     tab: Tab,
+    /// Kennzahlen, die im gemeinsamen Diagramm ausgeblendet sind.
+    hidden: Vec<Metric>,
     card: Option<PathBuf>,
     message: Option<String>,
 }
@@ -65,6 +67,7 @@ impl ChonkApp {
             last_import: None,
             range: Range::All,
             tab: Tab::Overview,
+            hidden: Vec::new(),
             card: None,
             message: None,
         };
@@ -519,7 +522,82 @@ impl ChonkApp {
 
     // ----------------------------------------------------------- Übersicht
 
-    fn overview(&self, visible: &[Measurement]) -> AnyElement {
+    fn toggle_metric(&mut self, metric: Metric) {
+        match self.hidden.iter().position(|m| *m == metric) {
+            Some(i) => {
+                self.hidden.remove(i);
+            }
+            None => self.hidden.push(metric),
+        }
+    }
+
+    /// Alle Kennzahlen in einem Diagramm; ein Klick in der Legende blendet eine Reihe aus oder ein.
+    fn trend_card(&self, visible: &[Measurement], cx: &Context<Self>) -> Div {
+        let since = visible.first().map(|m| fmt_date(m.measured_at));
+        let legend = Metric::ALL.into_iter().map(|metric| {
+            let shown = !self.hidden.contains(&metric);
+            div()
+                .id(SharedString::from(format!("legend-{metric:?}")))
+                .flex()
+                .items_center()
+                .gap_1p5()
+                .px_2()
+                .py_0p5()
+                .rounded(px(6.))
+                .text_size(px(12.))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(theme::GRID)))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.toggle_metric(metric);
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .w(px(12.))
+                        .h(px(3.))
+                        .rounded(px(1.5))
+                        .bg(rgb(if shown {
+                            metric_color(metric)
+                        } else {
+                            theme::AXIS
+                        })),
+                )
+                .child(
+                    div()
+                        .when(shown, |d| d.text_color(rgb(theme::TEXT_SECONDARY)))
+                        .when(!shown, |d| {
+                            d.text_color(rgb(theme::TEXT_MUTED)).line_through()
+                        })
+                        .child(metric.label()),
+                )
+        });
+        let series = Metric::ALL
+            .into_iter()
+            .filter(|metric| !self.hidden.contains(metric))
+            .map(|metric| Series {
+                label: metric.label(),
+                points: metric.series(visible),
+                color: metric_color(metric),
+                unit: metric.unit(),
+                decimals: metric.decimals(),
+            })
+            .collect();
+
+        card()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(card_title(
+                t().trend,
+                since
+                    .map(|date| t().percent_change_since(&date))
+                    .unwrap_or_default(),
+            ))
+            .child(div().flex().flex_wrap().gap_1().children(legend))
+            .child(div().h(px(250.)).w_full().child(multi_chart(series)))
+    }
+
+    fn overview(&self, visible: &[Measurement], cx: &Context<Self>) -> AnyElement {
         let Some(latest) = visible.last() else {
             return self.empty_state();
         };
@@ -557,13 +635,11 @@ impl ChonkApp {
             .child(tile(Metric::MetabolicAge, visible, None, age_note))
             .child(tile(Metric::Dci, visible, None, None));
 
-        let small_charts = div()
-            .grid()
-            .grid_cols(3)
-            .gap_4()
-            .child(chart_card(Metric::Fat, theme::FAT, visible, 180.))
-            .child(chart_card(Metric::Muscle, theme::MUSCLE, visible, 180.))
-            .child(chart_card(Metric::Water, theme::WATER, visible, 180.));
+        let charts = div().grid().grid_cols(3).gap_4().children(
+            Metric::ALL
+                .into_iter()
+                .map(|metric| chart_card(metric, visible, 180.)),
+        );
 
         div()
             .id("overview")
@@ -577,16 +653,15 @@ impl ChonkApp {
                     .gap_4()
                     .px_6()
                     .pb_6()
-                    .child(div().flex().gap_4().child(hero(visible, latest)).child(
-                        div().flex_1().min_w(px(0.)).child(chart_card(
-                            Metric::Weight,
-                            theme::WEIGHT,
-                            visible,
-                            250.,
-                        )),
-                    ))
+                    .child(
+                        div().flex().gap_4().child(hero(visible, latest)).child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .child(self.trend_card(visible, cx)),
+                        ),
+                    )
                     .child(tiles)
-                    .child(small_charts)
                     .child(
                         div()
                             .grid()
@@ -594,7 +669,8 @@ impl ChonkApp {
                             .gap_4()
                             .child(segments_card(latest))
                             .child(composition_card(latest)),
-                    ),
+                    )
+                    .child(charts),
             )
             .into_any_element()
     }
@@ -729,7 +805,7 @@ impl Render for ChonkApp {
         let now = Local::now().naive_local();
         let visible = self.range.filter(&self.data, now);
         let body = match self.tab {
-            Tab::Overview => self.overview(visible),
+            Tab::Overview => self.overview(visible, cx),
             Tab::Table => self.table(visible),
         };
 
@@ -1002,7 +1078,23 @@ fn tile(
         }))
 }
 
-fn chart_card(metric: Metric, color: u32, data: &[Measurement], height: f32) -> Div {
+/// Feste Zuordnung Kennzahl → Farbe.
+fn metric_color(metric: Metric) -> u32 {
+    match metric {
+        Metric::Weight => theme::WEIGHT,
+        Metric::Fat => theme::FAT,
+        Metric::Muscle => theme::MUSCLE,
+        Metric::Water => theme::WATER,
+        Metric::Bone => theme::BONE,
+        Metric::Bmi => theme::BMI,
+        Metric::Visceral => theme::VISCERAL,
+        Metric::MetabolicAge => theme::METABOLIC_AGE,
+        Metric::Dci => theme::DCI,
+    }
+}
+
+fn chart_card(metric: Metric, data: &[Measurement], height: f32) -> Div {
+    let color = metric_color(metric);
     let points = metric.series(data);
     let unit = if metric.unit().is_empty() {
         String::new()

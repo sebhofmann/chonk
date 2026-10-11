@@ -20,6 +20,26 @@ pub struct ChartSpec {
     pub decimals: usize,
 }
 
+/// Eine Kennzahl im gemeinsamen Diagramm.
+pub struct Series {
+    pub label: &'static str,
+    /// (Unix-Sekunden, Wert), aufsteigend sortiert.
+    pub points: Vec<(i64, f64)>,
+    pub color: u32,
+    pub unit: &'static str,
+    pub decimals: usize,
+}
+
+/// Mehrere Kennzahlen in einem Diagramm. Weil ihre Einheiten nicht zusammenpassen, zeigt die
+/// y-Achse die Veränderung in Prozent gegenüber dem ersten Wert des Zeitraums.
+pub fn multi_chart(series: Vec<Series>) -> impl IntoElement {
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, cx| paint_multi_chart(&series, bounds, window, cx),
+    )
+    .size_full()
+}
+
 pub fn line_chart(spec: ChartSpec) -> impl IntoElement {
     canvas(
         |_, _, _| (),
@@ -213,73 +233,122 @@ fn time_ticks(t0: i64, t1: i64, lang: Lang) -> Vec<(i64, String)> {
     ticks
 }
 
-fn paint_line_chart(spec: &ChartSpec, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
-    let pts = &spec.points;
-    if pts.is_empty() {
-        return;
-    }
-    let (bx, by, bw, bh) = rect(bounds);
-    let (left, right, top, bottom) = (40.0f32, 14.0f32, 10.0f32, 26.0f32);
-    let (px0, py0) = (bx + left, by + top);
-    let (pw, ph) = (bw - left - right, bh - top - bottom);
-    if pw < 40.0 || ph < 40.0 {
-        return;
+/// Zeichenfläche mit Skalen: rechnet Zeit und Wert in Pixel um.
+struct Plot {
+    x0: f32,
+    y0: f32,
+    w: f32,
+    h: f32,
+    t0: i64,
+    t1: i64,
+    lo: f64,
+    hi: f64,
+}
+
+impl Plot {
+    /// Legt die Zeichenfläche in `bounds` an; `None`, wenn der Platz nicht reicht.
+    fn new(bounds: Bounds<Pixels>, left: f32, t: (i64, i64), v: (f64, f64)) -> Option<Self> {
+        let (bx, by, bw, bh) = rect(bounds);
+        let (w, h) = (bw - left - PLOT_RIGHT, bh - PLOT_TOP - PLOT_BOTTOM);
+        if w < 40.0 || h < 40.0 {
+            return None;
+        }
+        let (mut t0, mut t1) = t;
+        if t1 - t0 < DAY {
+            t0 -= DAY;
+            t1 += DAY;
+        }
+        Some(Self {
+            x0: bx + left,
+            y0: by + PLOT_TOP,
+            w,
+            h,
+            t0,
+            t1,
+            lo: v.0,
+            hi: v.1,
+        })
     }
 
-    // Skalen
-    let vmin = pts.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
-    let vmax = pts.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
-    let (lo, hi, step) = y_scale(vmin, vmax, 4);
-    let (mut t0, mut t1) = (pts[0].0, pts[pts.len() - 1].0);
-    if t1 - t0 < DAY {
-        t0 -= DAY;
-        t1 += DAY;
+    fn sx(&self, t: i64) -> f32 {
+        self.x0 + self.w * ((t - self.t0) as f64 / (self.t1 - self.t0) as f64) as f32
     }
-    let sx = |t: i64| px0 + pw * ((t - t0) as f64 / (t1 - t0) as f64) as f32;
-    let sy = |v: f64| py0 + ph * (1.0 - ((v - lo) / (hi - lo)) as f32);
 
-    // Gitterlinien und y-Beschriftung
-    let tick_decimals = if step.fract().abs() < 1e-9 { 0 } else { 1 };
-    let mut v = lo;
-    while v <= hi + step * 0.01 {
-        let y = sy(v).round();
-        let is_base = (v - lo).abs() < step * 0.01;
+    fn sy(&self, v: f64) -> f32 {
+        self.y0 + self.h * (1.0 - ((v - self.lo) / (self.hi - self.lo)) as f32)
+    }
+
+    fn pos(&self, p: (i64, f64)) -> gpui::Point<Pixels> {
+        point(px(self.sx(p.0)), px(self.sy(p.1)))
+    }
+
+    /// Ob die Maus über der Zeichenfläche (samt Zeitachse) steht.
+    fn hovered(&self, mx: f32, my: f32) -> bool {
+        mx >= self.x0 - 10.0
+            && mx <= self.x0 + self.w + 10.0
+            && my >= self.y0
+            && my <= self.y0 + self.h + PLOT_BOTTOM
+    }
+}
+
+const PLOT_RIGHT: f32 = 14.0;
+const PLOT_TOP: f32 = 10.0;
+const PLOT_BOTTOM: f32 = 26.0;
+
+/// Gitterlinien und y-Beschriftung; die Linie bei `base` wird als Grundlinie betont.
+fn paint_grid(
+    plot: &Plot,
+    step: f64,
+    base: f64,
+    label: impl Fn(f64) -> String,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let mut v = plot.lo;
+    while v <= plot.hi + step * 0.01 {
+        let y = plot.sy(v).round();
+        let is_base = (v - base).abs() < step * 0.01;
         window.paint_quad(fill(
-            Bounds::new(point(px(px0), px(y)), size(px(pw), px(1.))),
+            Bounds::new(point(px(plot.x0), px(y)), size(px(plot.w), px(1.))),
             rgb(if is_base { theme::AXIS } else { theme::GRID }),
         ));
-        let label = shape(
-            window,
-            &fmt_num(v, tick_decimals),
-            11.0,
-            theme::TEXT_MUTED,
-            false,
-        );
+        let label = shape(window, &label(v), 11.0, theme::TEXT_MUTED, false);
         let lw = f32::from(label.width);
-        draw(&label, px0 - 8.0 - lw, y - 7.0, 11.0, window, cx);
+        draw(&label, plot.x0 - 8.0 - lw, y - 7.0, 11.0, window, cx);
         v += step;
     }
+}
 
-    // x-Beschriftung, überlappende Marken werden ausgelassen
+/// x-Beschriftung, überlappende Marken werden ausgelassen.
+fn paint_time_axis(plot: &Plot, window: &mut Window, cx: &mut App) {
     let mut last_right = f32::NEG_INFINITY;
-    for (ts, text) in time_ticks(t0, t1, lang()) {
-        let x = sx(ts);
+    for (ts, text) in time_ticks(plot.t0, plot.t1, lang()) {
+        let x = plot.sx(ts);
         let label = shape(window, &text, 11.0, theme::TEXT_MUTED, false);
         let lw = f32::from(label.width);
-        let lx = (x - lw / 2.0).clamp(px0, px0 + pw - lw);
+        let lx = (x - lw / 2.0).clamp(plot.x0, plot.x0 + plot.w - lw);
         if lx < last_right + 14.0 {
             continue;
         }
         window.paint_quad(fill(
-            Bounds::new(point(px(x.round()), px(py0 + ph)), size(px(1.), px(4.))),
+            Bounds::new(
+                point(px(x.round()), px(plot.y0 + plot.h)),
+                size(px(1.), px(4.)),
+            ),
             rgb(theme::AXIS),
         ));
-        draw(&label, lx, py0 + ph + 8.0, 11.0, window, cx);
+        draw(&label, lx, plot.y0 + plot.h + 8.0, 11.0, window, cx);
         last_right = lx + lw;
     }
+}
 
+/// Zeichnet eine Zeitreihe als Linie, auf Wunsch mit Fläche bis zur Grundlinie.
+fn paint_series(plot: &Plot, pts: &[(i64, f64)], color: u32, area: bool, window: &mut Window) {
+    if pts.is_empty() {
+        return;
+    }
     // Messpausen: lange Lücken unterbrechen die Linie, statt Werte vorzutäuschen.
-    let gap = ((t1 - t0) as f64 * 0.12).max(45.0 * DAY as f64) as i64;
+    let gap = ((plot.t1 - plot.t0) as f64 * 0.12).max(45.0 * DAY as f64) as i64;
     let mut runs: Vec<&[(i64, f64)]> = Vec::new();
     let mut run_start = 0;
     for i in 1..pts.len() {
@@ -291,65 +360,116 @@ fn paint_line_chart(spec: &ChartSpec, bounds: Bounds<Pixels>, window: &mut Windo
     runs.push(&pts[run_start..]);
 
     for pair in runs.windows(2) {
-        let a = pair[0][pair[0].len() - 1];
-        let b = pair[1][0];
         let mut bridge = PathBuilder::stroke(px(1.)).dash_array(&[px(3.), px(4.)]);
-        bridge.move_to(point(px(sx(a.0)), px(sy(a.1))));
-        bridge.line_to(point(px(sx(b.0)), px(sy(b.1))));
+        bridge.move_to(plot.pos(pair[0][pair[0].len() - 1]));
+        bridge.line_to(plot.pos(pair[1][0]));
         if let Ok(path) = bridge.build() {
-            window.paint_path(path, alpha(spec.color, 0.55));
+            window.paint_path(path, alpha(color, 0.55));
         }
     }
 
+    let bottom = plot.y0 + plot.h;
     for run in &runs {
         if run.len() == 1 {
-            dot(window, sx(run[0].0), sy(run[0].1), 3.0, spec.color);
+            dot(window, plot.sx(run[0].0), plot.sy(run[0].1), 3.0, color);
             continue;
         }
-        let mut area = PathBuilder::fill();
-        area.move_to(point(px(sx(run[0].0)), px(py0 + ph)));
-        for p in run.iter() {
-            area.line_to(point(px(sx(p.0)), px(sy(p.1))));
-        }
-        area.line_to(point(px(sx(run[run.len() - 1].0)), px(py0 + ph)));
-        area.close();
-        if let Ok(path) = area.build() {
-            window.paint_path(path, alpha(spec.color, 0.10));
+        if area {
+            let mut area = PathBuilder::fill();
+            area.move_to(point(px(plot.sx(run[0].0)), px(bottom)));
+            for p in run.iter() {
+                area.line_to(plot.pos(*p));
+            }
+            area.line_to(point(px(plot.sx(run[run.len() - 1].0)), px(bottom)));
+            area.close();
+            if let Ok(path) = area.build() {
+                window.paint_path(path, alpha(color, 0.10));
+            }
         }
 
         let mut line = PathBuilder::stroke(px(2.));
-        line.move_to(point(px(sx(run[0].0)), px(sy(run[0].1))));
+        line.move_to(plot.pos(run[0]));
         for p in run.iter().skip(1) {
-            line.line_to(point(px(sx(p.0)), px(sy(p.1))));
+            line.line_to(plot.pos(*p));
         }
         if let Ok(path) = line.build() {
-            window.paint_path(path, rgb(spec.color));
+            window.paint_path(path, rgb(color));
         }
     }
 
     // Letzter Wert als markierter Endpunkt
     let last = pts[pts.len() - 1];
-    ringed_dot(window, sx(last.0), sy(last.1), 4.0, spec.color);
+    ringed_dot(window, plot.sx(last.0), plot.sy(last.1), 4.0, color);
+}
+
+/// Die Messung, deren Zeitpunkt der Maus waagerecht am nächsten liegt.
+fn nearest(plot: &Plot, times: impl Iterator<Item = i64>, mx: f32) -> Option<i64> {
+    times.min_by(|a, b| {
+        (plot.sx(*a) - mx)
+            .abs()
+            .partial_cmp(&(plot.sx(*b) - mx).abs())
+            .unwrap()
+    })
+}
+
+fn paint_crosshair(plot: &Plot, t: i64, window: &mut Window) {
+    window.paint_quad(fill(
+        Bounds::new(
+            point(px(plot.sx(t).round()), px(plot.y0)),
+            size(px(1.), px(plot.h)),
+        ),
+        rgb(theme::TEXT_MUTED),
+    ));
+}
+
+fn paint_tooltip_box(x: f32, y: f32, w: f32, h: f32, window: &mut Window) {
+    window.paint_quad(quad(
+        Bounds::new(point(px(x), px(y)), size(px(w), px(h))),
+        px(6.),
+        rgb(theme::SURFACE_RAISED),
+        px(1.),
+        rgb(theme::AXIS),
+        BorderStyle::default(),
+    ));
+}
+
+fn date_label(ts: i64) -> String {
+    DateTime::from_timestamp(ts, 0)
+        .map(|d| fmt_date_time(d.naive_utc()))
+        .unwrap_or_default()
+}
+
+fn paint_line_chart(spec: &ChartSpec, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+    let pts = &spec.points;
+    if pts.is_empty() {
+        return;
+    }
+    let vmin = pts.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
+    let vmax = pts.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+    let (lo, hi, step) = y_scale(vmin, vmax, 4);
+    let span = (pts[0].0, pts[pts.len() - 1].0);
+    let Some(plot) = Plot::new(bounds, 40.0, span, (lo, hi)) else {
+        return;
+    };
+
+    let tick_decimals = if step.fract().abs() < 1e-9 { 0 } else { 1 };
+    paint_grid(&plot, step, lo, |v| fmt_num(v, tick_decimals), window, cx);
+    paint_time_axis(&plot, window, cx);
+    paint_series(&plot, pts, spec.color, true, window);
 
     // Hover: Fadenkreuz rastet auf die nächstgelegene Messung ein
     let mouse = window.mouse_position();
     let (mx, my) = (f32::from(mouse.x), f32::from(mouse.y));
-    if mx < px0 - 10.0 || mx > px0 + pw + 10.0 || my < py0 || my > py0 + ph + bottom {
+    if !plot.hovered(mx, my) {
         return;
     }
-    let Some(hit) = pts.iter().min_by(|a, b| {
-        (sx(a.0) - mx)
-            .abs()
-            .partial_cmp(&(sx(b.0) - mx).abs())
-            .unwrap()
-    }) else {
+    let Some(hit) =
+        nearest(&plot, pts.iter().map(|p| p.0), mx).and_then(|t| pts.iter().find(|p| p.0 == t))
+    else {
         return;
     };
-    let (hx, hy) = (sx(hit.0), sy(hit.1));
-    window.paint_quad(fill(
-        Bounds::new(point(px(hx.round()), px(py0)), size(px(1.), px(ph))),
-        rgb(theme::TEXT_MUTED),
-    ));
+    let (hx, hy) = (plot.sx(hit.0), plot.sy(hit.1));
+    paint_crosshair(&plot, hit.0, window);
     ringed_dot(window, hx, hy, 4.0, spec.color);
 
     let value = shape(
@@ -359,27 +479,136 @@ fn paint_line_chart(spec: &ChartSpec, bounds: Bounds<Pixels>, window: &mut Windo
         theme::TEXT,
         true,
     );
-    let when = DateTime::from_timestamp(hit.0, 0)
-        .map(|d| fmt_date_time(d.naive_utc()))
-        .unwrap_or_default();
-    let date = shape(window, &when, 11.0, theme::TEXT_SECONDARY, false);
+    let date = shape(
+        window,
+        &date_label(hit.0),
+        11.0,
+        theme::TEXT_SECONDARY,
+        false,
+    );
     let tw = f32::from(value.width).max(f32::from(date.width)) + 20.0;
     let th = 48.0;
     let mut tx = hx + 12.0;
-    if tx + tw > px0 + pw {
+    if tx + tw > plot.x0 + plot.w {
         tx = hx - 12.0 - tw;
     }
-    let ty = (hy - th - 10.0).clamp(py0, py0 + ph - th);
-    window.paint_quad(quad(
-        Bounds::new(point(px(tx), px(ty)), size(px(tw), px(th))),
-        px(6.),
-        rgb(theme::SURFACE_RAISED),
-        px(1.),
-        rgb(theme::AXIS),
-        BorderStyle::default(),
-    ));
+    let ty = (hy - th - 10.0).clamp(plot.y0, plot.y0 + plot.h - th);
+    paint_tooltip_box(tx, ty, tw, th, window);
     draw(&value, tx + 10.0, ty + 8.0, 13.0, window, cx);
     draw(&date, tx + 10.0, ty + 27.0, 11.0, window, cx);
+}
+
+/// Veränderung jedes Werts in Prozent gegenüber dem ersten Wert der Reihe.
+fn percent_change(points: &[(i64, f64)]) -> Vec<(i64, f64)> {
+    let Some(base) = points.iter().map(|p| p.1).find(|v| v.abs() > 1e-9) else {
+        return Vec::new();
+    };
+    points
+        .iter()
+        .map(|(t, v)| (*t, (v / base - 1.0) * 100.0))
+        .collect()
+}
+
+fn fmt_percent(v: f64, decimals: usize) -> String {
+    let number = fmt_num(v.abs(), decimals);
+    if v.abs() < 0.5 * 10f64.powi(-(decimals as i32)) {
+        format!("{number} %")
+    } else if v > 0.0 {
+        format!("+{number} %")
+    } else {
+        format!("−{number} %")
+    }
+}
+
+fn paint_multi_chart(series: &[Series], bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+    let changes: Vec<Vec<(i64, f64)>> = series.iter().map(|s| percent_change(&s.points)).collect();
+    let all = || changes.iter().flatten();
+    let (Some(t0), Some(t1)) = (all().map(|p| p.0).min(), all().map(|p| p.0).max()) else {
+        return;
+    };
+    // Die Nulllinie gehört immer ins Bild, sie ist der Bezugspunkt aller Reihen.
+    let vmin = all().map(|p| p.1).fold(0.0, f64::min);
+    let vmax = all().map(|p| p.1).fold(0.0, f64::max);
+    let (lo, hi, step) = y_scale(vmin, vmax, 4);
+    let Some(plot) = Plot::new(bounds, 52.0, (t0, t1), (lo, hi)) else {
+        return;
+    };
+
+    let tick_decimals = if step.fract().abs() < 1e-9 { 0 } else { 1 };
+    paint_grid(
+        &plot,
+        step,
+        0.0,
+        |v| fmt_percent(v, tick_decimals),
+        window,
+        cx,
+    );
+    paint_time_axis(&plot, window, cx);
+    for (s, change) in series.iter().zip(&changes) {
+        paint_series(&plot, change, s.color, false, window);
+    }
+
+    // Hover: Fadenkreuz auf der nächstgelegenen Messung, Tooltip mit den echten Werten
+    let mouse = window.mouse_position();
+    let (mx, my) = (f32::from(mouse.x), f32::from(mouse.y));
+    if !plot.hovered(mx, my) {
+        return;
+    }
+    let Some(hit) = nearest(&plot, all().map(|p| p.0), mx) else {
+        return;
+    };
+    let hx = plot.sx(hit);
+    paint_crosshair(&plot, hit, window);
+
+    let mut rows = Vec::new();
+    for (s, change) in series.iter().zip(&changes) {
+        let Ok(i) = change.binary_search_by_key(&hit, |p| p.0) else {
+            continue;
+        };
+        ringed_dot(window, hx, plot.sy(change[i].1), 3.5, s.color);
+        let label = shape(window, s.label, 12.0, theme::TEXT_SECONDARY, false);
+        let value = shape(
+            window,
+            &with_unit(&fmt_num(s.points[i].1, s.decimals), s.unit),
+            12.0,
+            theme::TEXT,
+            true,
+        );
+        rows.push((s.color, label, value));
+    }
+
+    let date = shape(window, &date_label(hit), 11.0, theme::TEXT_SECONDARY, false);
+    let label_w = rows
+        .iter()
+        .map(|r| f32::from(r.1.width))
+        .fold(0.0, f32::max);
+    let value_w = rows
+        .iter()
+        .map(|r| f32::from(r.2.width))
+        .fold(0.0, f32::max);
+    let (swatch, row_h) = (16.0, 18.0);
+    let tw = f32::from(date.width).max(swatch + label_w + 16.0 + value_w) + 20.0;
+    let th = 30.0 + rows.len() as f32 * row_h + 6.0;
+    let mut tx = hx + 12.0;
+    if tx + tw > plot.x0 + plot.w {
+        tx = hx - 12.0 - tw;
+    }
+    let ty = (my - th / 2.0).clamp(plot.y0, (plot.y0 + plot.h - th).max(plot.y0));
+    paint_tooltip_box(tx, ty, tw, th, window);
+    draw(&date, tx + 10.0, ty + 8.0, 11.0, window, cx);
+    for (i, (color, label, value)) in rows.iter().enumerate() {
+        let y = ty + 30.0 + i as f32 * row_h;
+        dot(window, tx + 14.0, y + 8.0, 4.0, *color);
+        draw(label, tx + 10.0 + swatch, y, 12.0, window, cx);
+        draw(
+            value,
+            tx + tw - 10.0 - f32::from(value.width),
+            y,
+            12.0,
+            window,
+            cx,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -392,6 +621,18 @@ mod tests {
         assert_eq!((lo, hi, step), (72.0, 80.0, 2.0));
         let (lo, hi, _) = y_scale(5.0, 5.0, 4);
         assert!(lo < 5.0 && hi > 5.0);
+    }
+
+    #[test]
+    fn percent_change_is_relative_to_first_value() {
+        let change = percent_change(&[(0, 80.0), (1, 84.0), (2, 76.0)]);
+        assert_eq!(change[0], (0, 0.0));
+        assert!((change[1].1 - 5.0).abs() < 1e-9);
+        assert!((change[2].1 + 5.0).abs() < 1e-9);
+        assert!(percent_change(&[]).is_empty());
+        assert_eq!(fmt_percent(5.0, 0), "+5 %");
+        assert_eq!(fmt_percent(-2.0, 0), "−2 %");
+        assert_eq!(fmt_percent(0.0, 0), "0 %");
     }
 
     #[test]

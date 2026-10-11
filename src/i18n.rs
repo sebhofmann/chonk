@@ -106,6 +106,7 @@ pub struct Text {
     pub age_matches: &'static str,
     // Übersicht
     pub current_weight: &'static str,
+    pub trend: &'static str,
     pub lowest: &'static str,
     pub highest: &'static str,
     pub average: &'static str,
@@ -172,6 +173,7 @@ pub static DE: Text = Text {
     highly_elevated: "stark erhöht",
     age_matches: "entspricht dem tatsächlichen Alter",
     current_weight: "Aktuelles Gewicht",
+    trend: "Verlauf",
     lowest: "Tiefstwert",
     highest: "Höchstwert",
     average: "Durchschnitt",
@@ -238,6 +240,7 @@ pub static EN: Text = Text {
     highly_elevated: "highly elevated",
     age_matches: "matches your actual age",
     current_weight: "Current weight",
+    trend: "Trend",
     lowest: "Lowest",
     highest: "Highest",
     average: "Average",
@@ -409,6 +412,13 @@ impl Text {
         self.pick(
             format!("{change} seit {date}"),
             format!("{change} since {date}"),
+        )
+    }
+
+    pub fn percent_change_since(&self, date: &str) -> String {
+        self.pick(
+            format!("Veränderung in % seit {date}"),
+            format!("change in % since {date}"),
         )
     }
 

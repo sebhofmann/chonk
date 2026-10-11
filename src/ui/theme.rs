@@ -16,6 +16,10 @@ pub const FAT: u32 = 0xd95926;
 pub const MUSCLE: u32 = 0x199e70;
 pub const WATER: u32 = 0xc98500;
 pub const BONE: u32 = 0x898781;
+pub const BMI: u32 = 0xd55181;
+pub const VISCERAL: u32 = 0x9085e9;
+pub const METABOLIC_AGE: u32 = 0x008300;
+pub const DCI: u32 = 0xe66767;
 
 // Statusfarben, nur für Bewertungen und immer mit Text.
 pub const GOOD: u32 = 0x0ca30c;
