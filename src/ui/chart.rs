@@ -186,10 +186,7 @@ fn time_ticks(t0: i64, t1: i64) -> Vec<(i64, String)> {
             12
         };
         let (mut y, mut m) = (start.year(), start.month());
-        loop {
-            let Some(d) = NaiveDate::from_ymd_opt(y, m, 1) else {
-                break;
-            };
+        while let Some(d) = NaiveDate::from_ymd_opt(y, m, 1) {
             if d > end {
                 break;
             }
@@ -249,7 +246,13 @@ fn paint_line_chart(spec: &ChartSpec, bounds: Bounds<Pixels>, window: &mut Windo
             Bounds::new(point(px(px0), px(y)), size(px(pw), px(1.))),
             rgb(if is_base { theme::AXIS } else { theme::GRID }),
         ));
-        let label = shape(window, &fmt_num(v, tick_decimals), 11.0, theme::TEXT_MUTED, false);
+        let label = shape(
+            window,
+            &fmt_num(v, tick_decimals),
+            11.0,
+            theme::TEXT_MUTED,
+            false,
+        );
         let lw = f32::from(label.width);
         draw(&label, px0 - 8.0 - lw, y - 7.0, 11.0, window, cx);
         v += step;

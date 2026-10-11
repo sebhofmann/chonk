@@ -1,0 +1,68 @@
+name: Release
+
+# Ein Tag wie v0.1.0 baut die App für alle Plattformen und hängt sie an ein GitHub-Release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  create:
+    name: Release anlegen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Release anlegen, falls es noch fehlt
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --title "Fettsack $GITHUB_REF_NAME" --generate-notes
+
+  build:
+    name: ${{ matrix.name }}
+    needs: create
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+          - name: macOS
+            os: macos-latest
+          - name: Windows
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Linux bauen und packen
+        if: runner.os == 'Linux'
+        run: |
+          ./script/linux-deps.sh
+          cargo build --release --locked
+          tar -C target/release -czf "fettsack-$GITHUB_REF_NAME-linux-x86_64.tar.gz" fettsack
+          gh release upload "$GITHUB_REF_NAME" "fettsack-$GITHUB_REF_NAME-linux-x86_64.tar.gz" --clobber
+
+      - name: macOS bauen und packen
+        if: runner.os == 'macOS'
+        run: |
+          ./script/bundle-macos.sh "${GITHUB_REF_NAME#v}" "Fettsack-$GITHUB_REF_NAME-macos-universal.zip"
+          gh release upload "$GITHUB_REF_NAME" "Fettsack-$GITHUB_REF_NAME-macos-universal.zip" --clobber
+
+      - name: Windows bauen und packen
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo build --release --locked
+          $zip = "fettsack-$env:GITHUB_REF_NAME-windows-x86_64.zip"
+          Compress-Archive -Path target/release/fettsack.exe -DestinationPath $zip
+          gh release upload $env:GITHUB_REF_NAME $zip --clobber

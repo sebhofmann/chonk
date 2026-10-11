@@ -65,8 +65,11 @@ pub struct Profile {
 
 fn tokenize(line: &str) -> Result<HashMap<&str, &str>> {
     let line = line.trim().trim_start_matches('{');
-    let tokens: Vec<&str> = line.split(',').map(|t| t.trim().trim_matches('"')).collect();
-    if tokens.len() % 2 != 0 {
+    let tokens: Vec<&str> = line
+        .split(',')
+        .map(|t| t.trim().trim_matches('"'))
+        .collect();
+    if !tokens.len().is_multiple_of(2) {
         bail!("ungerade Anzahl an Feldern ({})", tokens.len());
     }
     Ok(tokens.chunks(2).map(|c| (c[0], c[1])).collect())

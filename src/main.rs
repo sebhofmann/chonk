@@ -1,6 +1,9 @@
 //! Fettsack – archiviert die Messungen einer Tanita-Körperanalysewaage
 //! von der SD-Karte in einer lokalen SQLite-Datenbank und stellt sie dar.
 
+// Unter Windows kein Konsolenfenster neben der App öffnen.
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 mod db;
 mod model;
 mod sdcard;
@@ -28,7 +31,10 @@ fn main() {
 
     Application::new().run(move |cx: &mut App| {
         cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+        cx.bind_keys([
+            KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("ctrl-q", Quit, None),
+        ]);
         cx.set_menus(vec![Menu {
             name: "Fettsack".into(),
             items: vec![MenuItem::action("Fettsack beenden", Quit)],

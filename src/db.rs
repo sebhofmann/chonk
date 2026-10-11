@@ -1,5 +1,6 @@
 //! Lokales Archiv in SQLite (`~/.fettsack/fettsack.db`).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -82,7 +83,9 @@ pub fn data_dir() -> Result<PathBuf> {
     if let Ok(dir) = std::env::var("FETTSACK_HOME") {
         return Ok(PathBuf::from(dir));
     }
-    let home = std::env::var("HOME").context("HOME ist nicht gesetzt")?;
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .context("Weder HOME noch USERPROFILE ist gesetzt")?;
     Ok(PathBuf::from(home).join(".fettsack"))
 }
 
@@ -98,6 +101,13 @@ impl Db {
         let conn = Connection::open(path)
             .with_context(|| format!("{} konnte nicht geöffnet werden", path.display()))?;
         conn.execute_batch(SCHEMA)?;
+        // Migration: Archive aus älteren Versionen kennen noch keine Profilnamen.
+        let has_name = conn
+            .prepare("SELECT 1 FROM pragma_table_info('profiles') WHERE name = 'name'")?
+            .exists([])?;
+        if !has_name {
+            conn.execute_batch("ALTER TABLE profiles ADD COLUMN name TEXT")?;
+        }
         Ok(Self {
             conn,
             path: path.to_path_buf(),
@@ -208,9 +218,14 @@ impl Db {
         )?;
         let rows = stmt.query_map([profile], |r| {
             let measured_at: String = r.get(1)?;
-            let measured_at = NaiveDateTime::parse_from_str(&measured_at, DT_FORMAT).map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
-            })?;
+            let measured_at =
+                NaiveDateTime::parse_from_str(&measured_at, DT_FORMAT).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
             Ok(Measurement {
                 profile: r.get(0)?,
                 measured_at,
@@ -247,9 +262,9 @@ impl Db {
 
     /// Profil-Slots, für die Messungen vorliegen, mit Anzahl.
     pub fn profile_slots(&self) -> Result<Vec<(u8, usize)>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT profile, COUNT(*) FROM measurements GROUP BY profile ORDER BY profile")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT profile, COUNT(*) FROM measurements GROUP BY profile ORDER BY profile",
+        )?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as usize)))?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
@@ -274,11 +289,34 @@ impl Db {
         Ok(rows.next().transpose()?)
     }
 
+    /// Vom Nutzer vergebene Namen je Profil-Slot.
+    pub fn profile_names(&self) -> Result<HashMap<u8, String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT slot, name FROM profiles WHERE name IS NOT NULL AND name <> ''")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<HashMap<_, _>>>()?)
+    }
+
+    /// Setzt oder löscht (leerer Text) den Namen eines Profils. Der Name bleibt
+    /// bei späteren Importen erhalten.
+    pub fn set_profile_name(&self, slot: u8, name: &str) -> Result<()> {
+        let name = name.trim();
+        let name = (!name.is_empty()).then_some(name);
+        let now = Local::now().naive_local().format(DT_FORMAT).to_string();
+        self.conn.execute(
+            "INSERT INTO profiles (slot, name, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(slot) DO UPDATE SET name = excluded.name",
+            params![slot, name, now],
+        )?;
+        Ok(())
+    }
+
     /// Zeitpunkt des letzten Imports.
     pub fn last_import(&self) -> Result<Option<NaiveDateTime>> {
-        let ts: Option<String> = self
-            .conn
-            .query_row("SELECT MAX(imported_at) FROM imports", [], |r| r.get(0))?;
+        let ts: Option<String> =
+            self.conn
+                .query_row("SELECT MAX(imported_at) FROM imports", [], |r| r.get(0))?;
         Ok(ts.and_then(|t| NaiveDateTime::parse_from_str(&t, DT_FORMAT).ok()))
     }
 }
@@ -303,5 +341,51 @@ mod tests {
         assert_eq!(stored, vec![m]);
         assert_eq!(db.profile_slots().unwrap(), vec![(1, 1)]);
         assert!(db.last_import().unwrap().is_some());
+    }
+
+    #[test]
+    fn profile_names_survive_a_reimport() {
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let profile = crate::tanita::Profile {
+            slot: 2,
+            model: "BC-601".into(),
+            birth_date: None,
+            gender: Some(1),
+            height_cm: Some(180.0),
+            activity_level: Some(1),
+            body_type: Some(0),
+        };
+        db.set_profile_name(2, "  Alex ").unwrap();
+        db.import("test", std::slice::from_ref(&profile), &[])
+            .unwrap();
+        assert_eq!(
+            db.profile_names().unwrap().get(&2).map(String::as_str),
+            Some("Alex")
+        );
+        assert_eq!(db.profile(2).unwrap(), Some(profile));
+
+        db.set_profile_name(2, "").unwrap();
+        assert!(db.profile_names().unwrap().is_empty());
+    }
+
+    #[test]
+    fn migrates_an_archive_without_names() {
+        let path = std::env::temp_dir().join(format!("fettsack-mig-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE profiles (slot INTEGER PRIMARY KEY, model TEXT NOT NULL DEFAULT '',
+                 birth_date TEXT, gender INTEGER, height_cm REAL, activity_level INTEGER,
+                 body_type INTEGER, updated_at TEXT NOT NULL);
+                 INSERT INTO profiles (slot, updated_at) VALUES (1, '2024-01-01 00:00:00');",
+            )
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        db.set_profile_name(1, "Alex").unwrap();
+        assert_eq!(db.profile_names().unwrap().len(), 1);
+        drop(db);
+        std::fs::remove_file(&path).unwrap();
     }
 }

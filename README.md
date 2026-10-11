@@ -3,25 +3,45 @@
 Desktop-App (Rust + [gpui](https://www.gpui.rs)), die die Messungen einer
 Tanita-Körperanalysewaage (getestet mit der BC-601) von der SD-Karte liest,
 in einer lokalen SQLite-Datenbank archiviert und mit Diagrammen darstellt.
+Läuft unter macOS, Linux und Windows.
 
-## Starten
+## Installieren
+
+Fertige Pakete hängen an den [Releases](../../releases):
+
+| System | Paket | Hinweis |
+|---|---|---|
+| macOS | `Fettsack-…-macos-universal.zip` | Die App ist nicht notarisiert. Beim ersten Start per Rechtsklick „Öffnen" wählen oder `xattr -dr com.apple.quarantine Fettsack.app` ausführen. |
+| Linux | `fettsack-…-linux-x86_64.tar.gz` | Braucht Vulkan sowie Wayland oder X11. |
+| Windows | `fettsack-…-windows-x86_64.zip` | `fettsack.exe` direkt starten. |
+
+## Selbst bauen
 
 ```sh
 cargo run --release
 ```
 
-Die App sucht unter `/Volumes/*/TANITA/GRAPHV1` nach der Karte. Ist sie
+Unter Debian/Ubuntu vorher `script/linux-deps.sh` ausführen.
+
+## Bedienung
+
+Die App sucht auf allen Wechseldatenträgern nach dem Ordner `TANITA/GRAPHV1`
+(macOS: `/Volumes`, Linux: `/run/media/$USER`, `/media`, `/mnt`, Windows: alle
+Laufwerksbuchstaben). Ist die Karte
 eingelegt (beim Start oder später), werden neue Messungen automatisch
 importiert. Bereits archivierte Messungen werden übersprungen, die Karte wird
 nur gelesen.
+
+Die Waage kennt acht Profile, aber keine Namen. Ein Klick auf den Profilnamen
+unter dem Titel vergibt einen eigenen Namen (Enter speichert, Esc bricht ab).
 
 ## Daten
 
 | Was | Wo |
 |---|---|
-| Archiv | `~/.fettsack/fettsack.db` (SQLite) |
+| Archiv | `~/.fettsack/fettsack.db` (SQLite), unter Windows `%USERPROFILE%\.fettsack` |
 | Messungen | Tabelle `measurements`, eindeutig je Profil und Zeitpunkt, inklusive Originalzeile in `raw` |
-| Profile | Tabelle `profiles` (Slot 1–8 der Waage) |
+| Profile | Tabelle `profiles` (Slot 1–8 der Waage, eigener Name in `name`) |
 | Importprotokoll | Tabelle `imports` |
 
 Umgebungsvariablen zum Testen: `FETTSACK_HOME` (anderer Datenordner) und
@@ -50,7 +70,11 @@ Umgebungsvariablen zum Testen: `FETTSACK_HOME` (anderer Datenordner) und
 
 Zeilen mit falscher Prüfsumme werden beim Import übersprungen.
 
-## Hinweis zum Bauen
+## Entwicklung
 
-gpui wird mit dem Feature `runtime_shaders` gebaut. Dadurch genügen die
-Xcode Command Line Tools, ein vollständiges Xcode ist nicht nötig.
+- gpui wird mit dem Feature `runtime_shaders` gebaut. Unter macOS genügen
+  dadurch die Xcode Command Line Tools, ein vollständiges Xcode ist nicht nötig.
+- Der Workflow `CI` prüft jeden Push unter Linux, macOS und Windows
+  (Formatierung, Clippy, Tests, Release-Build).
+- Ein Tag wie `v0.1.0` startet den Workflow `Release`, der die Pakete baut und
+  an ein GitHub-Release hängt.

@@ -1,12 +1,14 @@
 //! Hauptansicht: Kopfzeile, Zeitraumfilter, Übersicht mit Diagrammen und Messwerttabelle.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use chrono::{Local, NaiveDateTime};
 use gpui::{
-    AnyElement, ClickEvent, Context, Div, FontWeight, IntoElement, MouseMoveEvent, Render,
-    SharedString, Window, div, prelude::*, px, relative, rgb,
+    AnyElement, ClickEvent, Context, Div, FocusHandle, FontWeight, IntoElement, KeyDownEvent,
+    MouseDownEvent, MouseMoveEvent, Render, SharedString, Window, div, prelude::*, px, relative,
+    rgb,
 };
 
 use super::chart::{ChartSpec, line_chart, sparkline};
@@ -18,6 +20,9 @@ use crate::model::{
 };
 use crate::sdcard;
 use crate::tanita::{Measurement, Profile};
+
+/// Maximale Länge eines Profilnamens in Zeichen.
+const MAX_NAME_LEN: usize = 24;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -31,6 +36,11 @@ pub struct FettsackApp {
     slots: Vec<(u8, usize)>,
     profile: u8,
     profile_info: Option<Profile>,
+    /// Selbst vergebene Profilnamen je Slot.
+    names: HashMap<u8, String>,
+    /// Eingabepuffer, solange der Profilname bearbeitet wird.
+    editing_name: Option<String>,
+    name_focus: FocusHandle,
     /// Alle Messungen des gewählten Profils, älteste zuerst.
     data: Vec<Measurement>,
     last_import: Option<NaiveDateTime>,
@@ -47,6 +57,9 @@ impl FettsackApp {
             slots: Vec::new(),
             profile: 1,
             profile_info: None,
+            names: HashMap::new(),
+            editing_name: None,
+            name_focus: cx.focus_handle(),
             data: Vec::new(),
             last_import: None,
             range: Range::All,
@@ -73,13 +86,14 @@ impl FettsackApp {
     fn reload(&mut self) {
         let result = (|| -> anyhow::Result<()> {
             self.slots = self.db.profile_slots()?;
-            if !self.slots.iter().any(|(s, _)| *s == self.profile) {
-                if let Some((first, _)) = self.slots.first() {
-                    self.profile = *first;
-                }
+            if !self.slots.iter().any(|(s, _)| *s == self.profile)
+                && let Some((first, _)) = self.slots.first()
+            {
+                self.profile = *first;
             }
             self.data = self.db.measurements(self.profile)?;
             self.profile_info = self.db.profile(self.profile)?;
+            self.names = self.db.profile_names()?;
             self.last_import = self.db.last_import()?;
             Ok(())
         })();
@@ -108,9 +122,11 @@ impl FettsackApp {
             return;
         };
         let result = sdcard::read_card(&card).and_then(|data| {
-            let stats =
-                self.db
-                    .import(&card.display().to_string(), &data.profiles, &data.measurements)?;
+            let stats = self.db.import(
+                &card.display().to_string(),
+                &data.profiles,
+                &data.measurements,
+            )?;
             Ok((stats, data.warnings))
         });
         self.message = Some(match result {
@@ -132,6 +148,113 @@ impl FettsackApp {
         });
         self.reload();
         cx.notify();
+    }
+
+    // -------------------------------------------------------- Profilnamen
+
+    fn profile_label(&self, slot: u8) -> String {
+        self.names
+            .get(&slot)
+            .cloned()
+            .unwrap_or_else(|| format!("Profil {slot}"))
+    }
+
+    fn start_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing_name = Some(self.names.get(&self.profile).cloned().unwrap_or_default());
+        window.focus(&self.name_focus);
+        cx.notify();
+    }
+
+    fn finish_rename(&mut self, save: bool, cx: &mut Context<Self>) {
+        let Some(name) = self.editing_name.take() else {
+            return;
+        };
+        if save {
+            if let Err(e) = self.db.set_profile_name(self.profile, &name) {
+                self.message = Some(format!("Name nicht gespeichert: {e:#}"));
+            }
+            self.reload();
+        }
+        cx.notify();
+    }
+
+    fn rename_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let Some(buffer) = self.editing_name.as_mut() else {
+            return;
+        };
+        let key = &event.keystroke;
+        match key.key.as_str() {
+            "enter" => return self.finish_rename(true, cx),
+            "escape" => return self.finish_rename(false, cx),
+            "backspace" => {
+                buffer.pop();
+            }
+            _ => {
+                let shortcut = key.modifiers.control || key.modifiers.platform;
+                if let Some(text) = key.key_char.as_ref().filter(|_| !shortcut)
+                    && buffer.chars().count() + text.chars().count() <= MAX_NAME_LEN
+                {
+                    buffer.extend(text.chars().filter(|c| !c.is_control()));
+                }
+            }
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// Name des gewählten Profils; ein Klick macht daraus ein Eingabefeld.
+    fn profile_name(&self, cx: &Context<Self>) -> AnyElement {
+        let chip = || {
+            div()
+                .flex()
+                .items_center()
+                .gap_1p5()
+                .px_2()
+                .py_0p5()
+                .rounded(px(6.))
+                .border_1()
+        };
+        match &self.editing_name {
+            Some(buffer) => chip()
+                .id("profile-name-input")
+                .track_focus(&self.name_focus)
+                .border_color(rgb(theme::WEIGHT))
+                .bg(rgb(theme::SURFACE))
+                .min_w(px(150.))
+                .on_key_down(
+                    cx.listener(|this, event: &KeyDownEvent, _, cx| this.rename_key(event, cx)),
+                )
+                .on_mouse_down_out(
+                    cx.listener(|this, _: &MouseDownEvent, _, cx| this.finish_rename(true, cx)),
+                )
+                .child(div().text_color(rgb(theme::TEXT)).child(buffer.clone()))
+                .child(div().w(px(1.)).h(px(15.)).bg(rgb(theme::TEXT)))
+                .when(buffer.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .text_color(rgb(theme::TEXT_MUTED))
+                            .child(format!("Name für Profil {}", self.profile)),
+                    )
+                })
+                .into_any_element(),
+            None => chip()
+                .id("profile-name")
+                .border_color(rgb(theme::BORDER))
+                .text_color(rgb(theme::TEXT_SECONDARY))
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(theme::SURFACE_RAISED)))
+                .on_click(
+                    cx.listener(|this, _: &ClickEvent, window, cx| this.start_rename(window, cx)),
+                )
+                .child(self.profile_label(self.profile))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(theme::TEXT_MUTED))
+                        .child("umbenennen"),
+                )
+                .into_any_element(),
+        }
     }
 
     // ---------------------------------------------------------------- Kopf
@@ -183,8 +306,15 @@ impl FettsackApp {
                     )
                     .child(
                         div()
-                            .text_color(rgb(theme::TEXT_MUTED))
-                            .child(facts.join("  ·  ")),
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(self.profile_name(cx))
+                            .child(
+                                div()
+                                    .text_color(rgb(theme::TEXT_MUTED))
+                                    .child(facts.join("  ·  ")),
+                            ),
                     ),
             )
             .child(
@@ -227,9 +357,9 @@ impl FettsackApp {
                                     .text_color(rgb(theme::TEXT))
                                     .cursor_pointer()
                                     .hover(|s| s.opacity(0.85))
-                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                        this.import(cx)
-                                    }))
+                                    .on_click(
+                                        cx.listener(|this, _: &ClickEvent, _, cx| this.import(cx)),
+                                    )
                             })
                             .when(!can_import, |d| {
                                 d.bg(rgb(theme::SURFACE_RAISED))
@@ -315,10 +445,11 @@ impl FettsackApp {
                 let slot = *slot;
                 self.segment_button(
                     format!("profile-{slot}"),
-                    format!("Profil {slot}"),
+                    self.profile_label(slot),
                     self.profile == slot,
                     cx,
                     move |this, _| {
+                        this.editing_name = None;
                         this.profile = slot;
                         this.reload();
                     },
@@ -416,20 +547,14 @@ impl FettsackApp {
                     .gap_4()
                     .px_6()
                     .pb_6()
-                    .child(
-                        div()
-                            .flex()
-                            .gap_4()
-                            .child(hero(visible, latest))
-                            .child(
-                                div().flex_1().min_w(px(0.)).child(chart_card(
-                                    Metric::Weight,
-                                    theme::WEIGHT,
-                                    visible,
-                                    250.,
-                                )),
-                            ),
-                    )
+                    .child(div().flex().gap_4().child(hero(visible, latest)).child(
+                        div().flex_1().min_w(px(0.)).child(chart_card(
+                            Metric::Weight,
+                            theme::WEIGHT,
+                            visible,
+                            250.,
+                        )),
+                    ))
                     .child(tiles)
                     .child(small_charts)
                     .child(
@@ -486,11 +611,15 @@ impl FettsackApp {
         }
         type Cell = fn(&Measurement) -> String;
         fn opt(m: Metric, x: &Measurement) -> String {
-            m.value(x).map(|v| m.format(v)).unwrap_or_else(|| "–".into())
+            m.value(x)
+                .map(|v| m.format(v))
+                .unwrap_or_else(|| "–".into())
         }
         let columns: [(&str, f32, Cell); 11] = [
             ("Datum", 1.3, |m| fmt_date(m.measured_at)),
-            ("Uhrzeit", 0.9, |m| m.measured_at.format("%H:%M").to_string()),
+            ("Uhrzeit", 0.9, |m| {
+                m.measured_at.format("%H:%M").to_string()
+            }),
             ("Gewicht kg", 1.0, |m| opt(Metric::Weight, m)),
             ("BMI", 0.8, |m| opt(Metric::Bmi, m)),
             ("Fett %", 0.8, |m| opt(Metric::Fat, m)),
@@ -646,7 +775,7 @@ fn delta_row(metric: Metric, data: &[Measurement]) -> Div {
         .iter()
         .filter_map(|m| Some((m.measured_at, metric.value(m)?)));
     let first = values.next();
-    let last = values.last();
+    let last = values.next_back();
     let (Some((since, a)), Some((_, b))) = (first, last) else {
         return row
             .text_color(rgb(theme::TEXT_MUTED))
@@ -828,7 +957,13 @@ fn tile(
                                 .child(metric.unit()),
                         ),
                 )
-                .child(div().w(px(84.)).h(px(30.)).flex_none().child(sparkline(spark))),
+                .child(
+                    div()
+                        .w(px(84.))
+                        .h(px(30.))
+                        .flex_none()
+                        .child(sparkline(spark)),
+                ),
         )
         .child(delta_row(metric, data))
         .children(status.map(|(label, s)| status_row(label, s)))
@@ -958,17 +1093,18 @@ fn composition_card(m: &Measurement) -> Div {
     let total: f64 = parts.iter().map(|p| p.1).sum::<f64>().max(1e-9);
     let last = parts.len().saturating_sub(1);
 
-    let stack = div()
-        .flex()
-        .gap(px(2.))
-        .h(px(22.))
-        .w_full()
-        .children(parts.iter().enumerate().map(|(i, (_, v, color))| {
-            let mut seg = div().h_full().bg(rgb(*color)).min_w(px(2.));
-            seg.style().flex_grow = Some((*v / total) as f32);
-            seg.style().flex_basis = Some(relative(0.).into());
-            seg.when(i == last, |d| d.rounded_r(px(4.)))
-        }));
+    let stack =
+        div()
+            .flex()
+            .gap(px(2.))
+            .h(px(22.))
+            .w_full()
+            .children(parts.iter().enumerate().map(|(i, (_, v, color))| {
+                let mut seg = div().h_full().bg(rgb(*color)).min_w(px(2.));
+                seg.style().flex_grow = Some((*v / total) as f32);
+                seg.style().flex_basis = Some(relative(0.).into());
+                seg.when(i == last, |d| d.rounded_r(px(4.)))
+            }));
 
     let legend = parts.iter().map(|(label, v, color)| {
         div()
