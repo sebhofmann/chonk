@@ -471,7 +471,7 @@ impl FettsackApp {
 
     fn footer(&self) -> impl IntoElement {
         let mut parts = vec![
-            format!("Archiv: {}", self.db.path().display()),
+            format!("Archiv: {}", crate::db::display_path(self.db.path())),
             format!("{} Messungen", self.data.len()),
         ];
         if let Some(ts) = self.last_import {

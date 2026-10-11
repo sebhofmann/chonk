@@ -83,10 +83,22 @@ pub fn data_dir() -> Result<PathBuf> {
     if let Ok(dir) = std::env::var("FETTSACK_HOME") {
         return Ok(PathBuf::from(dir));
     }
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .context("Weder HOME noch USERPROFILE ist gesetzt")?;
-    Ok(PathBuf::from(home).join(".fettsack"))
+    let home = home_dir().context("Weder HOME noch USERPROFILE ist gesetzt")?;
+    Ok(home.join(".fettsack"))
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+/// Pfad für die Anzeige, mit `~` statt des Home-Verzeichnisses.
+pub fn display_path(path: &Path) -> String {
+    match home_dir().and_then(|home| path.strip_prefix(home).ok().map(Path::to_path_buf)) {
+        Some(rest) => Path::new("~").join(rest).display().to_string(),
+        None => path.display().to_string(),
+    }
 }
 
 impl Db {

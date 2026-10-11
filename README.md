@@ -5,6 +5,10 @@ Tanita-Körperanalysewaage (getestet mit der BC-601) von der SD-Karte liest,
 in einer lokalen SQLite-Datenbank archiviert und mit Diagrammen darstellt.
 Läuft unter macOS, Linux und Windows.
 
+![Übersicht der App mit Gewichtsverlauf, Kennzahlen und Profilumschalter](docs/screenshot.png)
+
+*Der Screenshot zeigt erfundene Beispieldaten.*
+
 ## Installieren
 
 Fertige Pakete hängen an den [Releases](../../releases):
@@ -47,6 +51,14 @@ unter dem Titel vergibt einen eigenen Namen (Enter speichert, Esc bricht ab).
 Umgebungsvariablen zum Testen: `FETTSACK_HOME` (anderer Datenordner) und
 `FETTSACK_CARD` (Pfad zu einem `TANITA/GRAPHV1`-Ordner statt der Karte).
 
+Eine Karte mit erfundenen Messwerten für zwei Profile erzeugt
+`script/fake-card.py`:
+
+```sh
+python3 script/fake-card.py /tmp/demo/TANITA/GRAPHV1
+FETTSACK_HOME=/tmp/demo/home FETTSACK_CARD=/tmp/demo/TANITA/GRAPHV1 cargo run
+```
+
 ## Dateiformat der Waage
 
 `DATA/DATAn.CSV` enthält pro Messung eine Zeile aus Schlüssel-Wert-Paaren,
@@ -77,5 +89,6 @@ Zeilen mit falscher Prüfsumme werden beim Import übersprungen.
 - Der Workflow `CI` prüft jeden Push unter Linux, macOS und Windows
   (Formatierung, Clippy, Tests). Abhängigkeiten werden zwischen den Läufen
   gecacht, reine Doku-Änderungen lösen keinen Lauf aus.
-- Ein Tag wie `v0.1.0` startet den Workflow `Release`, der die Pakete baut und
-  an ein GitHub-Release hängt.
+- Der Workflow `Release` startet, sobald auf GitHub ein Release veröffentlicht
+  wird (Releases → „Draft a new release" → Tag wie `v0.1.0` wählen →
+  „Publish release"). Er baut die Pakete und hängt sie an das Release.
