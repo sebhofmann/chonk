@@ -8,3 +8,9 @@ anyhow = "1.0.104"
 chrono = "0.4.45"
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+
+# gpui 0.2.2 zieht über zed-async-tar das alte xattr 0.2.3 nach, das unter Linux
+# `libc::ENOATTR` braucht. libc 0.2.190 hat die Konstante entfernt. Die Obergrenze
+# kann weg, sobald gpui eine neuere xattr-Version verwendet.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = ">=0.2.182, <0.2.190"
